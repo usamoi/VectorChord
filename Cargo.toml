@@ -1,0 +1,56 @@
+[package]
+name = "rabbithole"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+name = "rabbithole"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "pgrx_embed_rabbithole"
+path = "./src/bin/pgrx_embed.rs"
+
+[features]
+default = []
+pg14 = ["pgrx/pg14"]
+pg15 = ["pgrx/pg15"]
+pg16 = ["pgrx/pg16"]
+pg17 = ["pgrx/pg17"]
+
+[dependencies]
+pgrx = { version = "=0.12.5", default-features = false, features = [] }
+base = { git = "ssh://git@github.com/tensorchord/pgvecto.rs.git", branch = "rabbithole-2" }
+common = { git = "ssh://git@github.com/tensorchord/pgvecto.rs.git", branch = "rabbithole-2" }
+detect = { git = "ssh://git@github.com/tensorchord/pgvecto.rs.git", branch = "rabbithole-2" }
+k_means = { git = "ssh://git@github.com/tensorchord/pgvecto.rs.git", branch = "rabbithole-2" }
+quantization = { git = "ssh://git@github.com/tensorchord/pgvecto.rs.git", branch = "rabbithole-2" }
+paste = "1"
+serde = "1"
+toml = "0.8.19"
+rand = "0.8.5"
+nalgebra = "0.33.0"
+rand_distr = "0.4.3"
+rkyv = { version = "0.7.45", features = ["validation"] }
+rand_chacha = "0.3.1"
+seq-macro = "0.3.5"
+validator = "0.18.1"
+
+[patch.crates-io]
+pgrx = { git = "https://github.com/tensorchord/pgrx.git", branch = "v0.12.5-patch" }
+
+[lints]
+rust.unsafe_op_in_unsafe_fn = "deny"
+rust.unused_lifetimes = "warn"
+rust.unused_qualifications = "warn"
+
+[profile.opt]
+inherits = "dev"
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = true
