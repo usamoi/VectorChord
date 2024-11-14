@@ -48,7 +48,7 @@ pub fn build<T: HeapRelation, R: Reporter>(
             let mut tuples_total = 0_u64;
             let samples = {
                 let mut rand = rand::thread_rng();
-                let max_number_of_samples = internal_build.lists.saturating_mul(256);
+                let max_number_of_samples = internal_build.lists[0].saturating_mul(256);
                 let mut samples = Vec::new();
                 let mut number_of_samples = 0_u32;
                 heap_relation.traverse(false, |(_, vector)| {
@@ -167,6 +167,7 @@ pub fn build<T: HeapRelation, R: Reporter>(
     forwards.head.get_mut().get_opaque_mut().fast_forward = vectors.first();
     meta.push(&MetaTuple {
         dims,
+        height_of_root: 2,
         is_residual,
         vectors_first: vectors.first(),
         forwards_first: forwards.first(),
@@ -196,7 +197,7 @@ impl Structure {
             |parallelism| {
                 k_means::k_means(
                     parallelism,
-                    internal_build.lists as usize,
+                    internal_build.lists[0] as usize,
                     vector_options.dims as usize,
                     samples,
                     internal_build.spherical_centroids,
