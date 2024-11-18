@@ -1,7 +1,7 @@
 use crate::algorithm::rabitq;
 use crate::algorithm::rabitq::fscan_process_lowerbound;
 use crate::algorithm::tuples::*;
-use crate::index::utils::distance;
+use crate::algorithm::vectors;
 use crate::postgres::Relation;
 use base::always_equal::AlwaysEqual;
 use base::distance::Distance;
@@ -28,70 +28,77 @@ pub fn insert(relation: Relation, payload: Pointer, vector: Vec<f32>, distance_k
     } else {
         None
     };
-    let h0_vector = 'h0_vector: {
-        let tuple = rkyv::to_bytes::<_, 8192>(&VectorTuple {
-            vector: vector.clone(),
-            payload: Some(payload.as_u64()),
-        })
-        .unwrap();
-        if let Some(mut write) = relation.search(tuple.len()) {
-            let i = write.get_mut().alloc(&tuple).unwrap();
-            break 'h0_vector (write.id(), i);
-        }
-        let mut current = relation.read(1).get().get_opaque().fast_forward;
-        let mut changed = false;
-        loop {
-            let read = relation.read(current);
-            let flag = 'flag: {
-                if read.get().freespace() as usize >= tuple.len() {
-                    break 'flag true;
+    let h0_vector = {
+        let slices = vectors::vector_split(&vector);
+        let mut chain = None;
+        for i in (0..slices.len()).rev() {
+            let tuple = rkyv::to_bytes::<_, 8192>(&VectorTuple {
+                slice: slices[i].to_vec(),
+                payload: Some(payload.as_u64()),
+                chain,
+            })
+            .unwrap();
+            chain = Some('chain: {
+                if let Some(mut write) = relation.search(tuple.len()) {
+                    let i = write.get_mut().alloc(&tuple).unwrap();
+                    break 'chain (write.id(), i);
                 }
-                if read.get().get_opaque().next == u32::MAX {
-                    break 'flag true;
-                }
-                false
-            };
-            if flag {
-                drop(read);
-                let mut write = relation.write(current);
-                if let Some(i) = write.get_mut().alloc(&tuple) {
-                    break (current, i);
-                }
-                if write.get().get_opaque().next == u32::MAX {
-                    if changed {
-                        relation.write(1).get_mut().get_opaque_mut().fast_forward = write.id();
-                    }
-                    let mut extend = relation.extend(true);
-                    write.get_mut().get_opaque_mut().next = extend.id();
-                    if let Some(i) = extend.get_mut().alloc(&tuple) {
-                        break (extend.id(), i);
+                let mut current = relation.read(1).get().get_opaque().fast_forward;
+                let mut changed = false;
+                loop {
+                    let read = relation.read(current);
+                    let flag = 'flag: {
+                        if read.get().freespace() as usize >= tuple.len() {
+                            break 'flag true;
+                        }
+                        if read.get().get_opaque().next == u32::MAX {
+                            break 'flag true;
+                        }
+                        false
+                    };
+                    if flag {
+                        drop(read);
+                        let mut write = relation.write(current);
+                        if let Some(i) = write.get_mut().alloc(&tuple) {
+                            break 'chain (current, i);
+                        }
+                        if write.get().get_opaque().next == u32::MAX {
+                            if changed {
+                                relation.write(1).get_mut().get_opaque_mut().fast_forward =
+                                    write.id();
+                            }
+                            let mut extend = relation.extend(true);
+                            write.get_mut().get_opaque_mut().next = extend.id();
+                            if let Some(i) = extend.get_mut().alloc(&tuple) {
+                                break 'chain (extend.id(), i);
+                            } else {
+                                panic!("a tuple cannot even be fit in a fresh page");
+                            }
+                        }
+                        current = write.get().get_opaque().next;
                     } else {
-                        panic!("a tuple cannot even be fit in a fresh page");
+                        current = read.get().get_opaque().next;
                     }
+                    changed = true;
                 }
-                current = write.get().get_opaque().next;
-            } else {
-                current = read.get().get_opaque().next;
-            }
-            changed = true;
+            });
         }
+        chain.unwrap()
     };
     let h0_payload = payload.as_u64();
-    let mut list = (
-        meta_tuple.first,
-        if is_residual {
-            let vector_guard = relation.read(meta_tuple.mean.0);
-            let vector_tuple = vector_guard
-                .get()
-                .get(meta_tuple.mean.1)
-                .map(rkyv::check_archived_root::<VectorTuple>)
-                .expect("data corruption")
-                .expect("data corruption");
-            Some(vector_tuple.vector.to_vec())
-        } else {
-            None
-        },
-    );
+    let mut list = {
+        let Some((_, original)) = vectors::vector_dist(
+            relation.clone(),
+            &vector,
+            meta_tuple.mean,
+            None,
+            None,
+            is_residual,
+        ) else {
+            panic!("data corruption")
+        };
+        (meta_tuple.first, original)
+    };
     let make_list = |list: (u32, Option<Vec<f32>>)| {
         let mut results = Vec::new();
         {
@@ -141,23 +148,17 @@ pub fn insert(relation: Relation, payload: Pointer, vector: Vec<f32>, distance_k
         {
             while !heap.is_empty() && heap.peek().map(|x| x.0) > cache.peek().map(|x| x.0) {
                 let (_, AlwaysEqual(mean), AlwaysEqual(first)) = heap.pop().unwrap();
-                let vector_guard = relation.read(mean.0);
-                let vector_tuple = vector_guard
-                    .get()
-                    .get(mean.1)
-                    .map(rkyv::check_archived_root::<VectorTuple>)
-                    .expect("data corruption")
-                    .expect("data corruption");
-                let dis_u = distance(distance_kind, &vector, &vector_tuple.vector);
-                cache.push((
-                    Reverse(dis_u),
-                    AlwaysEqual(first),
-                    AlwaysEqual(if is_residual {
-                        Some(vector_tuple.vector.to_vec())
-                    } else {
-                        None
-                    }),
-                ));
+                let Some((Some(dis_u), original)) = vectors::vector_dist(
+                    relation.clone(),
+                    &vector,
+                    mean,
+                    None,
+                    Some(distance_kind),
+                    is_residual,
+                ) else {
+                    panic!("data corruption")
+                };
+                cache.push((Reverse(dis_u), AlwaysEqual(first), AlwaysEqual(original)));
             }
             let (_, AlwaysEqual(first), AlwaysEqual(mean)) = cache.pop().unwrap();
             (first, mean)

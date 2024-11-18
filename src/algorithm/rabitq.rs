@@ -20,7 +20,7 @@ fn check_all_matrixs_are_full_rank() {
         let mut threads = vec![];
         for remainder in 0..parallelism {
             threads.push(scope.spawn(move || {
-                for n in (0..=2000).filter(|x| x % parallelism == remainder) {
+                for n in (0..=65535).filter(|x| x % parallelism == remainder) {
                     let matrix = random_matrix(n);
                     assert!(matrix.is_invertible());
                 }
@@ -61,10 +61,10 @@ fn orthogonal_matrix(n: usize) -> Vec<Vec<f32>> {
     projection
 }
 
-static MATRIXS: [OnceLock<Vec<Vec<f32>>>; 1 + 2000] = [const { OnceLock::new() }; 1 + 2000];
+static MATRIXS: [OnceLock<Vec<Vec<f32>>>; 1 + 65535] = [const { OnceLock::new() }; 1 + 65535];
 
 pub fn prewarm(n: usize) {
-    if n <= 2000 {
+    if n <= 65535 {
         MATRIXS[n].get_or_init(|| orthogonal_matrix(n));
     }
 }

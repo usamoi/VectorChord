@@ -18,9 +18,9 @@ pub struct MetaTuple {
 #[derive(Clone, PartialEq, Archive, Serialize, Deserialize)]
 #[archive(check_bytes)]
 pub struct VectorTuple {
-    pub vector: Vec<f32>,
-    // this field is saved only for vacuum
+    pub slice: Vec<f32>,
     pub payload: Option<u64>,
+    pub chain: Option<(u32, u16)>,
 }
 
 #[derive(Clone, PartialEq, Archive, Serialize, Deserialize)]

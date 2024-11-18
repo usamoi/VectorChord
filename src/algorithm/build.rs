@@ -1,6 +1,7 @@
 use crate::algorithm::k_means;
 use crate::algorithm::rabitq;
 use crate::algorithm::tuples::*;
+use crate::algorithm::vectors;
 use crate::index::am_options::Opfamily;
 use crate::postgres::BufferWriteGuard;
 use crate::postgres::Relation;
@@ -79,11 +80,16 @@ pub fn build<T: HeapRelation, R: Reporter>(
     for i in 0..structures.len() {
         let mut level = Vec::new();
         for j in 0..structures[i].len() {
-            let pointer = vectors.push(&VectorTuple {
-                payload: None,
-                vector: structures[i].means[j].clone(),
-            });
-            level.push(pointer);
+            let slices = vectors::vector_split(&structures[i].means[j]);
+            let mut chain = None;
+            for i in (0..slices.len()).rev() {
+                chain = Some(vectors.push(&VectorTuple {
+                    payload: None,
+                    slice: slices[i].to_vec(),
+                    chain,
+                }));
+            }
+            level.push(chain.unwrap());
         }
         pointer_of_means.push(level);
     }
