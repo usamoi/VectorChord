@@ -229,7 +229,10 @@ pub unsafe extern "C" fn ambuild(
     if let Err(errors) = Validate::validate(&vector_options) {
         pgrx::error!("error while validating options: {}", errors);
     }
-    if vector_options.dims > 65535 {
+    if vector_options.dims == 0 {
+        pgrx::error!("error while validating options: dimension cannot be 0");
+    }
+    if vector_options.dims > 60000 {
         pgrx::error!("error while validating options: dimension is too large");
     }
     if let Err(errors) = Validate::validate(&vchordrq_options) {

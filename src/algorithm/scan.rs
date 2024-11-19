@@ -72,23 +72,19 @@ pub fn scan(
                         dims,
                         lut,
                         (
-                            &h1_tuple.dis_u_2,
-                            &h1_tuple.factor_ppc,
-                            &h1_tuple.factor_ip,
-                            &h1_tuple.factor_err,
+                            h1_tuple.dis_u_2,
+                            h1_tuple.factor_ppc,
+                            h1_tuple.factor_ip,
+                            h1_tuple.factor_err,
                             &h1_tuple.t,
                         ),
                         epsilon,
                     );
-                    for j in 0..32 {
-                        if h1_tuple.mask[j] {
-                            results.push((
-                                Reverse(lowerbounds[j]),
-                                AlwaysEqual(h1_tuple.mean[j]),
-                                AlwaysEqual(h1_tuple.first[j]),
-                            ));
-                        }
-                    }
+                    results.push((
+                        Reverse(lowerbounds),
+                        AlwaysEqual(h1_tuple.mean),
+                        AlwaysEqual(h1_tuple.first),
+                    ));
                 }
                 current = h1_guard.get().get_opaque().next;
             }
@@ -142,23 +138,19 @@ pub fn scan(
                         dims,
                         lut,
                         (
-                            &h0_tuple.dis_u_2,
-                            &h0_tuple.factor_ppc,
-                            &h0_tuple.factor_ip,
-                            &h0_tuple.factor_err,
+                            h0_tuple.dis_u_2,
+                            h0_tuple.factor_ppc,
+                            h0_tuple.factor_ip,
+                            h0_tuple.factor_err,
                             &h0_tuple.t,
                         ),
                         epsilon,
                     );
-                    for j in 0..32 {
-                        if h0_tuple.mask[j] {
-                            results.push((
-                                Reverse(lowerbounds[j]),
-                                AlwaysEqual(h0_tuple.mean[j]),
-                                AlwaysEqual(h0_tuple.payload[j]),
-                            ));
-                        }
-                    }
+                    results.push((
+                        Reverse(lowerbounds),
+                        AlwaysEqual(h0_tuple.mean),
+                        AlwaysEqual(h0_tuple.payload),
+                    ));
                 }
                 current = h0_guard.get().get_opaque().next;
             }
