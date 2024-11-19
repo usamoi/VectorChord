@@ -14,6 +14,7 @@ use base::index::VectorOptions;
 use base::scalar::ScalarLike;
 use base::search::Pointer;
 use rand::Rng;
+use rayon::iter::ParallelIterator;
 use rkyv::ser::serializers::AllocSerializer;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -198,9 +199,19 @@ impl Structure {
         mut samples: Vec<Vec<f32>>,
     ) -> Vec<Self> {
         use std::iter::once;
-        for sample in samples.iter_mut() {
-            *sample = rabitq::project(sample);
-        }
+        crate::algorithm::parallelism::RayonParallelism::scoped(
+            internal_build.build_threads as _,
+            Arc::new(|| {
+                pgrx::check_for_interrupts!();
+            }),
+            |parallelism| {
+                use crate::algorithm::parallelism::Parallelism;
+                parallelism.into_par_iter(&mut samples).for_each(|sample| {
+                    *sample = rabitq::project(sample);
+                });
+            },
+        )
+        .expect("failed to create thread pool");
         let mut result = Vec::<Self>::new();
         for w in internal_build.lists.iter().rev().copied().chain(once(1)) {
             let means = crate::algorithm::parallelism::RayonParallelism::scoped(

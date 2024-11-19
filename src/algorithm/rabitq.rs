@@ -88,27 +88,29 @@ pub struct Code {
 }
 
 pub fn code(dims: u32, vector: &[f32]) -> Code {
-    let sum_of_abs_x = f32::reduce_sum_of_abs_x(vector);
-    let sum_of_x_2 = f32::reduce_sum_of_x2(vector);
+    let truncated_dims = std::cmp::min(1600, dims);
+    let truncated_vector = &vector[..truncated_dims as usize];
+    let sum_of_abs_x = f32::reduce_sum_of_abs_x(truncated_vector);
+    let sum_of_x_2 = f32::reduce_sum_of_x2(truncated_vector);
     let dis_u = sum_of_x_2.sqrt();
-    let x0 = sum_of_abs_x / (sum_of_x_2 * (dims as f32)).sqrt();
+    let x0 = sum_of_abs_x / (sum_of_x_2 * (truncated_dims as f32)).sqrt();
     let x_x0 = dis_u / x0;
-    let fac_norm = (dims as f32).sqrt();
-    let max_x1 = 1.0f32 / (dims as f32 - 1.0).sqrt();
+    let fac_norm = (truncated_dims as f32).sqrt();
+    let max_x1 = 1.0f32 / (truncated_dims as f32 - 1.0).sqrt();
     let factor_err = 2.0f32 * max_x1 * (x_x0 * x_x0 - dis_u * dis_u).sqrt();
     let factor_ip = -2.0f32 / fac_norm * x_x0;
-    let cnt_pos = vector
+    let cnt_pos = truncated_vector
         .iter()
         .map(|x| x.is_sign_positive() as i32)
         .sum::<i32>();
-    let cnt_neg = vector
+    let cnt_neg = truncated_vector
         .iter()
         .map(|x| x.is_sign_negative() as i32)
         .sum::<i32>();
     let factor_ppc = factor_ip * (cnt_pos - cnt_neg) as f32;
     let mut signs = Vec::new();
-    for i in 0..dims {
-        signs.push(vector[i as usize].is_sign_positive() as u8);
+    for i in 0..truncated_dims {
+        signs.push(truncated_vector[i as usize].is_sign_positive() as u8);
     }
     Code {
         dis_u_2: sum_of_x_2,
@@ -120,12 +122,13 @@ pub fn code(dims: u32, vector: &[f32]) -> Code {
 }
 
 pub fn dummy_code(dims: u32) -> Code {
+    let truncated_dims = std::cmp::min(1600, dims);
     Code {
         dis_u_2: 0.0,
         factor_ppc: 0.0,
         factor_ip: 0.0,
         factor_err: 0.0,
-        signs: vec![0; dims as _],
+        signs: vec![0; truncated_dims as _],
     }
 }
 
@@ -138,6 +141,7 @@ pub struct PackedCodes {
 }
 
 pub fn pack_codes(dims: u32, codes: [Code; 32]) -> PackedCodes {
+    let truncated_dims = std::cmp::min(1600, dims);
     PackedCodes {
         dis_u_2: std::array::from_fn(|i| codes[i].dis_u_2),
         factor_ppc: std::array::from_fn(|i| codes[i].factor_ppc),
@@ -147,23 +151,21 @@ pub fn pack_codes(dims: u32, codes: [Code; 32]) -> PackedCodes {
             let signs = codes.map(|code| {
                 InfiniteByteChunks::new(code.signs.into_iter())
                     .map(|[b0, b1, b2, b3]| b0 | b1 << 1 | b2 << 2 | b3 << 3)
-                    .take(dims.div_ceil(4) as usize)
+                    .take(truncated_dims.div_ceil(4) as usize)
                     .collect::<Vec<_>>()
             });
-            quantization::fast_scan::b4::pack(dims.div_ceil(4), signs).collect()
+            quantization::fast_scan::b4::pack(truncated_dims.div_ceil(4), signs).collect()
         },
     }
 }
 
 pub fn fscan_preprocess(vector: &[f32]) -> (f32, f32, f32, f32, Vec<u8>) {
+    let truncated_dims = std::cmp::min(1600, vector.len() as u32);
+    let truncated_vector = &vector[..truncated_dims as usize];
     use quantization::quantize;
-    let dis_v_2 = f32::reduce_sum_of_x2(vector);
-    let (k, b, qvector) = quantize::quantize::<15>(vector);
-    let qvector_sum = if vector.len() <= 4369 {
-        quantize::reduce_sum_of_x_as_u16(&qvector) as f32
-    } else {
-        quantize::reduce_sum_of_x_as_u32(&qvector) as f32
-    };
+    let dis_v_2 = f32::reduce_sum_of_x2(truncated_vector);
+    let (k, b, qvector) = quantize::quantize::<15>(truncated_vector);
+    let qvector_sum = quantize::reduce_sum_of_x_as_u16(&qvector) as f32;
     (dis_v_2, b, k, qvector_sum, compress(qvector))
 }
 
@@ -180,21 +182,25 @@ pub fn fscan_process_lowerbound(
     ),
     epsilon: f32,
 ) -> [Distance; 32] {
+    let truncated_dims = std::cmp::min(1600, dims);
+    let scale = (dims as f32 / truncated_dims as f32).sqrt();
     let &(dis_v_2, b, k, qvector_sum, ref s) = lut;
-    let r = quantization::fast_scan::b4::fast_scan_b4(dims.div_ceil(4), t, s);
+    let r = quantization::fast_scan::b4::fast_scan_b4(truncated_dims.div_ceil(4), t, s);
     match distance_kind {
         DistanceKind::L2 => std::array::from_fn(|i| {
-            let rough = dis_u_2[i]
+            let rough = (dis_u_2[i]
                 + dis_v_2
                 + b * factor_ppc[i]
-                + ((2.0 * r[i] as f32) - qvector_sum) * factor_ip[i] * k;
-            let err = factor_err[i] * dis_v_2.sqrt();
+                + ((2.0 * r[i] as f32) - qvector_sum) * factor_ip[i] * k)
+                * scale;
+            let err = factor_err[i] * dis_v_2.sqrt() * scale;
             Distance::from_f32(rough - epsilon * err)
         }),
         DistanceKind::Dot => std::array::from_fn(|i| {
-            let rough = 0.5 * b * factor_ppc[i]
-                + 0.5 * ((2.0 * r[i] as f32) - qvector_sum) * factor_ip[i] * k;
-            let err = 0.5 * factor_err[i] * dis_v_2.sqrt();
+            let rough = (0.5 * b * factor_ppc[i]
+                + 0.5 * ((2.0 * r[i] as f32) - qvector_sum) * factor_ip[i] * k)
+                * scale;
+            let err = 0.5 * factor_err[i] * dis_v_2.sqrt() * scale;
             Distance::from_f32(rough - epsilon * err)
         }),
         DistanceKind::Hamming => unreachable!(),
@@ -203,9 +209,9 @@ pub fn fscan_process_lowerbound(
 }
 
 fn compress(mut qvector: Vec<u8>) -> Vec<u8> {
-    let dims = qvector.len() as u32;
-    let width = dims.div_ceil(4);
-    qvector.resize(qvector.len().next_multiple_of(4), 0);
+    let n = qvector.len() as u32;
+    let width = n.div_ceil(4);
+    qvector.resize(n.next_multiple_of(4) as _, 0);
     let mut t = vec![0u8; width as usize * 16];
     for i in 0..width as usize {
         unsafe {

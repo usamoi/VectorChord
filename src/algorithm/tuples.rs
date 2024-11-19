@@ -62,6 +62,7 @@ pub fn put(
     vector: (u32, u16),
     payload: u64,
 ) -> bool {
+    let truncated_dims = std::cmp::min(1600, dims);
     // todo: use mutable api
     let mut x = rkyv::from_bytes::<Height0Tuple>(bytes).expect("data corruption");
     for j in 0..32 {
@@ -73,7 +74,7 @@ pub fn put(
             x.factor_ppc[j] = code.factor_ppc;
             x.factor_ip[j] = code.factor_ip;
             x.factor_err[j] = code.factor_err;
-            let width = dims.div_ceil(4) as usize;
+            let width = truncated_dims.div_ceil(4) as usize;
             let table = [
                 (0, 0),
                 (2, 0),

@@ -172,6 +172,7 @@ pub fn insert(relation: Relation, payload: Pointer, vector: Vec<f32>, distance_k
     } else {
         rabitq::code(dims, &vector)
     };
+    let truncated_dims = std::cmp::min(1600, dims);
     let dummy = rkyv::to_bytes::<_, 8192>(&Height0Tuple {
         mask: [false; 32],
         mean: [(0, 0); 32],
@@ -180,7 +181,7 @@ pub fn insert(relation: Relation, payload: Pointer, vector: Vec<f32>, distance_k
         factor_ppc: [0.0f32; 32],
         factor_ip: [0.0f32; 32],
         factor_err: [0.0f32; 32],
-        t: vec![0; (dims.div_ceil(4) * 16) as usize],
+        t: vec![0; (truncated_dims.div_ceil(4) * 16) as usize],
     })
     .unwrap();
     let first = list.0;
