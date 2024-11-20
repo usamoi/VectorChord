@@ -190,7 +190,7 @@ pub unsafe extern "C" fn ambuild(
                 let vector = unsafe { opfamily.datum_to_vector(*values.add(0), *is_null.add(0)) };
                 let pointer = unsafe { ctid_to_pointer(ctid.read()) };
                 if let Some(vector) = vector {
-                    let vector = match opfamily.preprocess(vector.as_borrowed()) {
+                    let vector = match vector {
                         OwnedVector::Vecf32(x) => x,
                         OwnedVector::Vecf16(_) => unreachable!(),
                         OwnedVector::SVecf32(_) => unreachable!(),
@@ -567,7 +567,7 @@ unsafe fn parallel_build(
                 let vector = unsafe { opfamily.datum_to_vector(*values.add(0), *is_null.add(0)) };
                 let pointer = unsafe { ctid_to_pointer(ctid.read()) };
                 if let Some(vector) = vector {
-                    let vector = match opfamily.preprocess(vector.as_borrowed()) {
+                    let vector = match vector {
                         OwnedVector::Vecf32(x) => x,
                         OwnedVector::Vecf16(_) => unreachable!(),
                         OwnedVector::SVecf32(_) => unreachable!(),
@@ -662,7 +662,7 @@ pub unsafe extern "C" fn aminsert(
     let opfamily = unsafe { am_options::opfamily(index) };
     let vector = unsafe { opfamily.datum_to_vector(*values.add(0), *is_null.add(0)) };
     if let Some(vector) = vector {
-        let vector = match opfamily.preprocess(vector.as_borrowed()) {
+        let vector = match vector {
             OwnedVector::Vecf32(x) => x,
             OwnedVector::Vecf16(_) => unreachable!(),
             OwnedVector::SVecf32(_) => unreachable!(),
@@ -695,7 +695,7 @@ pub unsafe extern "C" fn aminsert(
     let opfamily = unsafe { am_options::opfamily(index) };
     let vector = unsafe { opfamily.datum_to_vector(*values.add(0), *is_null.add(0)) };
     if let Some(vector) = vector {
-        let vector = match opfamily.preprocess(vector.as_borrowed()) {
+        let vector = match vector {
             OwnedVector::Vecf32(x) => x,
             OwnedVector::Vecf16(_) => unreachable!(),
             OwnedVector::SVecf32(_) => unreachable!(),
