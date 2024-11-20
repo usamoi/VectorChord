@@ -141,7 +141,7 @@ impl Page {
         removes.dedup();
         let n = removes.len();
         if n > 0 {
-            assert!(removes[n - 1] < self.len());
+            assert!(removes[n - 1] <= self.len());
             unsafe {
                 pgrx::pg_sys::PageIndexMultiDelete(
                     (self as *mut Self).cast(),
