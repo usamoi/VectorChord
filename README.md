@@ -21,7 +21,6 @@ VectorChord incorporates the insights and lessons learned from pgvecto.rs, provi
 - **External Index Precomputation**: Built on IVF, VectorChord enables KMeans clustering to be performed externally (e.g., on a GPU) and seamlessly imported into the database.
 - **Lightning-Fast Index Building**: Build index up to 20x faster than pgvector hnsw with precomputed centroids. (1.5 min for 1M 960-dim vectors)
 - **Advanced Quantization**: Uses cutting-edge RaBitQ to compress float vectors into compact bit representations with autonomous reranking.
-- **Optimized SIMD Kernels**: Features a highly tuned computation kernel optimized for fast scans using SIMD and efficient register management.
 - **Disk-Friendly Performance**: Query laion-100M 768-dim vectors using just 32GB of memory, achieving 35ms P50 latency with top10 recall@95%.
 - **Seamless Compatibility**: Compatible with pgvector data types while delivering faster indexing and querying.
 - **Simple Configuration**: No need to tweak quantization or rerank parameters — best defaults are provided out of the box.
