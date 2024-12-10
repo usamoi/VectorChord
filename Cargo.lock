@@ -66,7 +66,7 @@ checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 [[package]]
 name = "base"
 version = "0.0.0"
-source = "git+https://github.com/usamoi/pgvecto.rs.git?rev=c911e8a476effaf05cd4b1a037826b100177bdad#c911e8a476effaf05cd4b1a037826b100177bdad"
+source = "git+https://github.com/tensorchord/pgvecto.rs.git?rev=c911e8a476effaf05cd4b1a037826b100177bdad#c911e8a476effaf05cd4b1a037826b100177bdad"
 dependencies = [
  "base_macros",
  "detect",
@@ -82,7 +82,7 @@ dependencies = [
 [[package]]
 name = "base_macros"
 version = "0.0.0"
-source = "git+https://github.com/usamoi/pgvecto.rs.git?rev=c911e8a476effaf05cd4b1a037826b100177bdad#c911e8a476effaf05cd4b1a037826b100177bdad"
+source = "git+https://github.com/tensorchord/pgvecto.rs.git?rev=c911e8a476effaf05cd4b1a037826b100177bdad#c911e8a476effaf05cd4b1a037826b100177bdad"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -299,7 +299,7 @@ dependencies = [
 [[package]]
 name = "detect"
 version = "0.0.0"
-source = "git+https://github.com/usamoi/pgvecto.rs.git?rev=c911e8a476effaf05cd4b1a037826b100177bdad#c911e8a476effaf05cd4b1a037826b100177bdad"
+source = "git+https://github.com/tensorchord/pgvecto.rs.git?rev=c911e8a476effaf05cd4b1a037826b100177bdad#c911e8a476effaf05cd4b1a037826b100177bdad"
 dependencies = [
  "detect_macros",
 ]
@@ -307,7 +307,7 @@ dependencies = [
 [[package]]
 name = "detect_macros"
 version = "0.0.0"
-source = "git+https://github.com/usamoi/pgvecto.rs.git?rev=c911e8a476effaf05cd4b1a037826b100177bdad#c911e8a476effaf05cd4b1a037826b100177bdad"
+source = "git+https://github.com/tensorchord/pgvecto.rs.git?rev=c911e8a476effaf05cd4b1a037826b100177bdad#c911e8a476effaf05cd4b1a037826b100177bdad"
 dependencies = [
  "proc-macro2",
  "quote",
