@@ -409,7 +409,7 @@ checksum = "1b43ede17f21864e81be2fa654110bf1e793774238d86ef8555c37e6519c0403"
 [[package]]
 name = "half"
 version = "2.4.1"
-source = "git+https://github.com/usamoi/half-rs.git#5b7fedc636c0eb1624763a40840c5cbf54cffd02"
+source = "git+https://github.com/tensorchord/half-rs.git#5b7fedc636c0eb1624763a40840c5cbf54cffd02"
 dependencies = [
  "cfg-if",
  "crunchy",

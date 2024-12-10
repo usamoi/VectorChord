@@ -42,7 +42,7 @@ toml = "0.8.19"
 validator = { version = "0.18.1", features = ["derive"] }
 
 [patch.crates-io]
-half = { git = "https://github.com/usamoi/half-rs.git" }
+half = { git = "https://github.com/tensorchord/half-rs.git" }
 
 [lints]
 rust.unsafe_op_in_unsafe_fn = "deny"
