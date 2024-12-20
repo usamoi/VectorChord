@@ -248,15 +248,8 @@ impl PostgresRelation {
     pub unsafe fn new(raw: pgrx::pg_sys::Relation) -> Self {
         Self { raw }
     }
-
-    #[allow(dead_code)]
-    pub fn len(&self) -> u32 {
-        unsafe {
-            pgrx::pg_sys::RelationGetNumberOfBlocksInFork(
-                self.raw,
-                pgrx::pg_sys::ForkNumber::MAIN_FORKNUM,
-            )
-        }
+    pub fn raw(&self) -> pgrx::pg_sys::Relation {
+        self.raw
     }
 }
 
