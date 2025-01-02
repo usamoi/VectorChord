@@ -1,0 +1,22 @@
+[package]
+name = "rabitq"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+bench = false
+
+[[bench]]
+name = "dot"
+harness = false
+
+[dependencies]
+distance = { path = "../distance" }
+simd = { path = "../simd" }
+
+[dev-dependencies]
+criterion = "0.5.1"
+rand.workspace = true
+
+[lints]
+workspace = true
