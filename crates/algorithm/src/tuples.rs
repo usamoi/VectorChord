@@ -1,4 +1,4 @@
-use crate::algorithm::operator::Vector;
+use crate::operator::Vector;
 use std::num::{NonZeroU8, NonZeroU64};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
@@ -124,7 +124,7 @@ impl MetaTupleReader<'_> {
 // freepage tuple
 
 #[repr(C, align(8))]
-#[derive(Debug, Clone, Copy, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 struct FreepageTupleHeader {
     a: [u32; 1],
     b: [u32; 32],
@@ -216,7 +216,7 @@ impl FreepageTupleWriter<'_> {
 // vector tuple
 
 #[repr(C, align(8))]
-#[derive(Debug, Clone, Copy, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 struct VectorTupleHeader0 {
     payload: Option<NonZeroU64>,
     metadata_s: usize,
@@ -225,7 +225,7 @@ struct VectorTupleHeader0 {
 }
 
 #[repr(C, align(8))]
-#[derive(Debug, Clone, Copy, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 struct VectorTupleHeader1 {
     payload: Option<NonZeroU64>,
     pointer: IndexPointer,
@@ -1008,15 +1008,14 @@ pub const fn pair_to_pointer(pair: (u32, u16)) -> IndexPointer {
     IndexPointer(value)
 }
 
-#[allow(dead_code)]
-const fn soundness_check(a: (u32, u16)) {
+#[test]
+const fn soundness_check() {
+    let a = (111, 222);
     let b = pair_to_pointer(a);
     let c = pointer_to_pair(b);
     assert!(a.0 == c.0);
     assert!(a.1 == c.1);
 }
-
-const _: () = soundness_check((111, 222));
 
 #[repr(transparent)]
 #[derive(
@@ -1133,6 +1132,7 @@ impl<'a> MutChecker<'a> {
                 self.flag[i / 64] |= 1 << (i % 64);
             }
         }
+        #[allow(unsafe_code)]
         let bytes = unsafe {
             std::slice::from_raw_parts_mut(self.bytes.as_mut_ptr().add(start), end - start)
         };
@@ -1155,6 +1155,7 @@ impl<'a> MutChecker<'a> {
                 self.flag[i / 64] |= 1 << (i % 64);
             }
         }
+        #[allow(unsafe_code)]
         let bytes = unsafe {
             std::slice::from_raw_parts_mut(self.bytes.as_mut_ptr().add(start), end - start)
         };

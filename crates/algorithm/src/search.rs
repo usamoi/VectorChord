@@ -1,26 +1,22 @@
-use crate::algorithm::operator::*;
-use crate::algorithm::tape::read_h0_tape;
-use crate::algorithm::tape::read_h1_tape;
-use crate::algorithm::tuples::*;
-use crate::algorithm::vectors;
-use crate::algorithm::{Page, RelationRead};
-use crate::utils::pipe::Pipe;
+use crate::operator::*;
+use crate::pipe::Pipe;
+use crate::tape::{read_h0_tape, read_h1_tape};
+use crate::tuples::*;
+use crate::{Page, RelationRead, vectors};
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::num::NonZeroU64;
-use vector::VectorBorrowed;
-use vector::VectorOwned;
+use vector::{VectorBorrowed, VectorOwned};
 
-pub fn scan<O: Operator>(
-    relation: impl RelationRead + Clone,
+pub fn search<O: Operator>(
+    index: impl RelationRead,
     vector: O::Vector,
     probes: Vec<u32>,
     epsilon: f32,
 ) -> impl Iterator<Item = (Distance, NonZeroU64)> {
-    let vector = O::Vector::random_projection(vector.as_borrowed());
-    let meta_guard = relation.read(0);
+    let meta_guard = index.read(0);
     let meta_tuple = meta_guard.get(1).unwrap().pipe(read_tuple::<MetaTuple>);
     let dims = meta_tuple.dims();
     let is_residual = meta_tuple.is_residual();
@@ -42,7 +38,7 @@ pub fn scan<O: Operator>(
         let mean = root_mean;
         if is_residual {
             let residual_u = vectors::vector_access_1::<O, _>(
-                relation.clone(),
+                index.clone(),
                 mean,
                 LAccess::new(
                     O::Vector::elements_and_metadata(vector.as_borrowed()),
@@ -63,7 +59,7 @@ pub fn scan<O: Operator>(
                 default_lut.as_ref().map(|x| &x.0).unwrap()
             };
             read_h1_tape(
-                relation.clone(),
+                |id| index.read(id),
                 first,
                 || {
                     RAccess::new(
@@ -83,7 +79,7 @@ pub fn scan<O: Operator>(
                 let (_, AlwaysEqual(mean), AlwaysEqual(first)) = heap.pop().unwrap();
                 if is_residual {
                     let (dis_u, residual_u) = vectors::vector_access_1::<O, _>(
-                        relation.clone(),
+                        index.clone(),
                         mean,
                         LAccess::new(
                             O::Vector::elements_and_metadata(vector.as_borrowed()),
@@ -100,7 +96,7 @@ pub fn scan<O: Operator>(
                     ));
                 } else {
                     let dis_u = vectors::vector_access_1::<O, _>(
-                        relation.clone(),
+                        index.clone(),
                         mean,
                         LAccess::new(
                             O::Vector::elements_and_metadata(vector.as_borrowed()),
@@ -127,14 +123,14 @@ pub fn scan<O: Operator>(
         } else {
             default_lut.as_ref().unwrap()
         };
-        let jump_guard = relation.read(first);
+        let jump_guard = index.read(first);
         let jump_tuple = jump_guard
             .get(1)
             .expect("data corruption")
             .pipe(read_tuple::<JumpTuple>);
         let first = jump_tuple.first();
         read_h0_tape(
-            relation.clone(),
+            |id| index.read(id),
             first,
             || {
                 RAccess::new(
@@ -154,7 +150,7 @@ pub fn scan<O: Operator>(
         while !heap.is_empty() && heap.peek().map(|x| x.0) > cache.peek().map(|x| x.0) {
             let (_, AlwaysEqual(mean), AlwaysEqual(pay_u)) = heap.pop().unwrap();
             if let Some(dis_u) = vectors::vector_access_0::<O, _>(
-                relation.clone(),
+                index.clone(),
                 mean,
                 pay_u,
                 LAccess::new(

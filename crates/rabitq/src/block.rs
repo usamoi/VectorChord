@@ -57,10 +57,11 @@ pub fn process_lowerbound_dot(
 }
 
 pub fn compress(mut vector: Vec<u8>) -> Vec<[u64; 2]> {
-    let width = vector.len().div_ceil(4);
-    vector.resize(width * 4, 0);
-    let mut result = vec![[0u64, 0u64]; width];
-    for i in 0..width {
+    let n = vector.len().div_ceil(4);
+    vector.resize(n * 4, 0);
+    let mut result = vec![[0u64, 0u64]; n];
+    for i in 0..n {
+        #[allow(unsafe_code)]
         unsafe {
             // this hint is used to skip bound checks
             std::hint::assert_unchecked(4 * i + 3 < vector.len());

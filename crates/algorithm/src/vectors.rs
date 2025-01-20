@@ -1,7 +1,7 @@
-use crate::algorithm::operator::*;
-use crate::algorithm::tuples::*;
-use crate::algorithm::{Page, PageGuard, RelationRead, RelationWrite};
-use crate::utils::pipe::Pipe;
+use crate::operator::*;
+use crate::pipe::Pipe;
+use crate::tuples::*;
+use crate::{Page, PageGuard, RelationRead, RelationWrite};
 use std::num::NonZeroU64;
 use vector::VectorOwned;
 
@@ -9,14 +9,14 @@ pub fn vector_access_1<
     O: Operator,
     A: Accessor1<<O::Vector as Vector>::Element, <O::Vector as Vector>::Metadata>,
 >(
-    relation: impl RelationRead,
+    index: impl RelationRead,
     mean: IndexPointer,
     accessor: A,
 ) -> A::Output {
     let mut cursor = Err(mean);
     let mut result = accessor;
     while let Err(mean) = cursor.map_err(pointer_to_pair) {
-        let vector_guard = relation.read(mean.0);
+        let vector_guard = index.read(mean.0);
         let vector_tuple = vector_guard
             .get(mean.1)
             .expect("data corruption")
@@ -34,7 +34,7 @@ pub fn vector_access_0<
     O: Operator,
     A: Accessor1<<O::Vector as Vector>::Element, <O::Vector as Vector>::Metadata>,
 >(
-    relation: impl RelationRead,
+    index: impl RelationRead,
     mean: IndexPointer,
     payload: NonZeroU64,
     accessor: A,
@@ -42,7 +42,7 @@ pub fn vector_access_0<
     let mut cursor = Err(mean);
     let mut result = accessor;
     while let Err(mean) = cursor.map_err(pointer_to_pair) {
-        let vector_guard = relation.read(mean.0);
+        let vector_guard = index.read(mean.0);
         let vector_tuple = vector_guard
             .get(mean.1)?
             .pipe(read_tuple::<VectorTuple<O::Vector>>);
@@ -59,34 +59,34 @@ pub fn vector_access_0<
 }
 
 pub fn vector_append<O: Operator>(
-    relation: impl RelationWrite + Clone,
+    index: impl RelationWrite,
     vectors_first: u32,
     vector: <O::Vector as VectorOwned>::Borrowed<'_>,
     payload: NonZeroU64,
 ) -> IndexPointer {
-    fn append(relation: impl RelationWrite, first: u32, bytes: &[u8]) -> IndexPointer {
-        if let Some(mut write) = relation.search(bytes.len()) {
+    fn append(index: impl RelationWrite, first: u32, bytes: &[u8]) -> IndexPointer {
+        if let Some(mut write) = index.search(bytes.len()) {
             let i = write.alloc(bytes).unwrap();
             return pair_to_pointer((write.id(), i));
         }
         assert!(first != u32::MAX);
         let mut current = first;
         loop {
-            let read = relation.read(current);
+            let read = index.read(current);
             if read.freespace() as usize >= bytes.len() || read.get_opaque().next == u32::MAX {
                 drop(read);
-                let mut write = relation.write(current, true);
+                let mut write = index.write(current, true);
                 if let Some(i) = write.alloc(bytes) {
                     return pair_to_pointer((current, i));
                 }
                 if write.get_opaque().next == u32::MAX {
-                    let mut extend = relation.extend(true);
+                    let mut extend = index.extend(true);
                     write.get_opaque_mut().next = extend.id();
                     drop(write);
                     if let Some(i) = extend.alloc(bytes) {
                         let result = (extend.id(), i);
                         drop(extend);
-                        let mut past = relation.write(first, true);
+                        let mut past = index.write(first, true);
                         let skip = &mut past.get_opaque_mut().skip;
                         assert!(*skip != u32::MAX);
                         *skip = std::cmp::max(*skip, result.0);
@@ -113,7 +113,7 @@ pub fn vector_append<O: Operator>(
     let mut chain = Ok(metadata);
     for i in (0..slices.len()).rev() {
         chain = Err(append(
-            relation.clone(),
+            index.clone(),
             vectors_first,
             &serialize::<VectorTuple<O::Vector>>(&match chain {
                 Ok(metadata) => VectorTuple::_0 {

@@ -1,24 +1,18 @@
-use crate::algorithm::operator::*;
-use crate::algorithm::tape::read_h1_tape;
-use crate::algorithm::tuples::*;
-use crate::algorithm::vectors::{self};
-use crate::algorithm::{Page, PageGuard, RelationWrite};
-use crate::utils::pipe::Pipe;
+use crate::operator::*;
+use crate::pipe::Pipe;
+use crate::tape::read_h1_tape;
+use crate::tuples::*;
+use crate::vectors::{self};
+use crate::{Page, PageGuard, RelationWrite};
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::num::NonZeroU64;
-use vector::VectorBorrowed;
-use vector::VectorOwned;
+use vector::{VectorBorrowed, VectorOwned};
 
-pub fn insert<O: Operator>(
-    relation: impl RelationWrite + Clone,
-    payload: NonZeroU64,
-    vector: O::Vector,
-) {
-    let vector = O::Vector::random_projection(vector.as_borrowed());
-    let meta_guard = relation.read(0);
+pub fn insert<O: Operator>(index: impl RelationWrite, payload: NonZeroU64, vector: O::Vector) {
+    let meta_guard = index.read(0);
     let meta_tuple = meta_guard.get(1).unwrap().pipe(read_tuple::<MetaTuple>);
     let dims = meta_tuple.dims();
     let is_residual = meta_tuple.is_residual();
@@ -35,19 +29,15 @@ pub fn insert<O: Operator>(
         None
     };
 
-    let mean = vectors::vector_append::<O>(
-        relation.clone(),
-        vectors_first,
-        vector.as_borrowed(),
-        payload,
-    );
+    let mean =
+        vectors::vector_append::<O>(index.clone(), vectors_first, vector.as_borrowed(), payload);
 
     type State<O> = (u32, Option<<O as Operator>::Vector>);
     let mut state: State<O> = {
         let mean = root_mean;
         if is_residual {
             let residual_u = vectors::vector_access_1::<O, _>(
-                relation.clone(),
+                index.clone(),
                 mean,
                 LAccess::new(
                     O::Vector::elements_and_metadata(vector.as_borrowed()),
@@ -69,7 +59,7 @@ pub fn insert<O: Operator>(
                 default_lut_block.as_ref().unwrap()
             };
             read_h1_tape(
-                relation.clone(),
+                |id| index.read(id),
                 first,
                 || {
                     RAccess::new(
@@ -89,7 +79,7 @@ pub fn insert<O: Operator>(
                 let (_, AlwaysEqual(mean), AlwaysEqual(first)) = heap.pop().unwrap();
                 if is_residual {
                     let (dis_u, residual_u) = vectors::vector_access_1::<O, _>(
-                        relation.clone(),
+                        index.clone(),
                         mean,
                         LAccess::new(
                             O::Vector::elements_and_metadata(vector.as_borrowed()),
@@ -106,7 +96,7 @@ pub fn insert<O: Operator>(
                     ));
                 } else {
                     let dis_u = vectors::vector_access_1::<O, _>(
-                        relation.clone(),
+                        index.clone(),
                         mean,
                         LAccess::new(
                             O::Vector::elements_and_metadata(vector.as_borrowed()),
@@ -140,7 +130,7 @@ pub fn insert<O: Operator>(
         elements: rabitq::pack_to_u64(&code.signs),
     });
 
-    let jump_guard = relation.read(first);
+    let jump_guard = index.read(first);
     let jump_tuple = jump_guard
         .get(1)
         .expect("data corruption")
@@ -151,21 +141,21 @@ pub fn insert<O: Operator>(
     assert!(first != u32::MAX);
     let mut current = first;
     loop {
-        let read = relation.read(current);
+        let read = index.read(current);
         if read.get_opaque().next == u32::MAX {
             drop(read);
-            let mut write = relation.write(current, false);
+            let mut write = index.write(current, false);
             if write.get_opaque().next == u32::MAX {
                 if write.alloc(&bytes).is_some() {
                     return;
                 }
-                let mut extend = relation.extend(false);
+                let mut extend = index.extend(false);
                 write.get_opaque_mut().next = extend.id();
                 drop(write);
                 let fresh = extend.id();
                 if extend.alloc(&bytes).is_some() {
                     drop(extend);
-                    let mut past = relation.write(first, false);
+                    let mut past = index.write(first, false);
                     past.get_opaque_mut().skip = std::cmp::max(past.get_opaque_mut().skip, fresh);
                     drop(past);
                     return;

@@ -1,15 +1,12 @@
-use super::RelationRead;
-use super::operator::Accessor1;
-use crate::algorithm::Page;
-use crate::algorithm::PageGuard;
-use crate::algorithm::tuples::*;
-use crate::utils::pipe::Pipe;
+use crate::operator::Accessor1;
+use crate::pipe::Pipe;
+use crate::tuples::*;
+use crate::{Page, PageGuard};
 use distance::Distance;
-use simd::fast_scan::any_pack;
-use simd::fast_scan::padding_pack;
+use simd::fast_scan::{any_pack, padding_pack};
 use std::marker::PhantomData;
 use std::num::NonZeroU64;
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 
 pub struct TapeWriter<G, E, T> {
     head: G,
@@ -178,7 +175,7 @@ where
     }
 }
 
-pub struct H0BranchWriter {
+pub struct H0Branch {
     pub mean: IndexPointer,
     pub dis_u_2: f32,
     pub factor_ppc: f32,
@@ -188,12 +185,12 @@ pub struct H0BranchWriter {
     pub payload: NonZeroU64,
 }
 
-pub struct H0Tape<G, E> {
+pub struct H0TapeWriter<G, E> {
     tape: TapeWriter<G, E, H0Tuple>,
-    branches: Vec<H0BranchWriter>,
+    branches: Vec<H0Branch>,
 }
 
-impl<G, E> H0Tape<G, E>
+impl<G, E> H0TapeWriter<G, E>
 where
     G: PageGuard + DerefMut,
     G::Target: Page,
@@ -205,7 +202,7 @@ where
             branches: Vec::new(),
         }
     }
-    pub fn push(&mut self, branch: H0BranchWriter) {
+    pub fn push(&mut self, branch: H0Branch) {
         self.branches.push(branch);
         if self.branches.len() == 32 {
             let chunk = std::array::from_fn::<_, 32, _>(|_| self.branches.pop().unwrap());
@@ -253,12 +250,14 @@ where
     }
 }
 
-pub fn read_h1_tape<A>(
-    relation: impl RelationRead,
+pub fn read_h1_tape<A, G>(
+    read: impl Fn(u32) -> G,
     first: u32,
     compute_block: impl Fn() -> A + Copy,
     mut callback: impl FnMut(Distance, IndexPointer, u32),
 ) where
+    G: PageGuard + Deref,
+    G::Target: Page,
     A: for<'a> Accessor1<
             [u64; 2],
             (&'a [f32; 32], &'a [f32; 32], &'a [f32; 32], &'a [f32; 32]),
@@ -269,7 +268,7 @@ pub fn read_h1_tape<A>(
     let mut current = first;
     let mut computing = None;
     while current != u32::MAX {
-        let h1_guard = relation.read(current);
+        let h1_guard = read(current);
         for i in 1..=h1_guard.len() {
             let h1_tuple = h1_guard
                 .get(i)
@@ -298,13 +297,15 @@ pub fn read_h1_tape<A>(
     }
 }
 
-pub fn read_h0_tape<A>(
-    relation: impl RelationRead,
+pub fn read_h0_tape<A, G>(
+    read: impl Fn(u32) -> G,
     first: u32,
     compute_block: impl Fn() -> A + Copy,
     compute_binary: impl Fn((f32, f32, f32, f32, &[u64])) -> Distance,
     mut callback: impl FnMut(Distance, IndexPointer, NonZeroU64),
 ) where
+    G: PageGuard + Deref,
+    G::Target: Page,
     A: for<'a> Accessor1<
             [u64; 2],
             (&'a [f32; 32], &'a [f32; 32], &'a [f32; 32], &'a [f32; 32]),
@@ -315,7 +316,7 @@ pub fn read_h0_tape<A>(
     let mut current = first;
     let mut computing = None;
     while current != u32::MAX {
-        let h0_guard = relation.read(current);
+        let h0_guard = read(current);
         for i in 1..=h0_guard.len() {
             let h0_tuple = h0_guard
                 .get(i)
