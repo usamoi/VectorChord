@@ -129,6 +129,7 @@ pub fn build<O: Operator, T: HeapRelation<O>, R: Reporter>(
                         factor_err: code.factor_err,
                         signs: code.signs,
                         first: pointer_of_firsts[i - 1][child as usize],
+                        size: structures[i - 1].len() as _,
                     });
                 }
                 let tape = tape.into_inner();
@@ -144,6 +145,7 @@ pub fn build<O: Operator, T: HeapRelation<O>, R: Reporter>(
         vectors_first: vectors.first(),
         root_mean: pointer_of_means.last().unwrap()[0],
         root_first: pointer_of_firsts.last().unwrap()[0],
+        root_size: structures.last().unwrap().len() as _,
         freepage_first: freepage.first(),
     });
 }

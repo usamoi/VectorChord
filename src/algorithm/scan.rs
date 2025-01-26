@@ -29,6 +29,7 @@ pub fn scan<O: Operator>(
     assert_eq!(height_of_root as usize, 1 + probes.len(), "invalid probes");
     let root_mean = meta_tuple.root_mean();
     let root_first = meta_tuple.root_first();
+    let root_size = meta_tuple.root_size();
     drop(meta_guard);
 
     let default_lut = if !is_residual {
@@ -37,8 +38,12 @@ pub fn scan<O: Operator>(
         None
     };
 
-    type State<O> = Vec<(u32, Option<<O as Operator>::Vector>)>;
-    let mut state: State<O> = vec![{
+    struct State<O: Operator> {
+        residual: Option<O::Vector>,
+        first: u32,
+        size: u32,
+    }
+    let mut states: Vec<State<O>> = vec![{
         let mean = root_mean;
         if is_residual {
             let residual_u = vectors::vector_access_1::<O, _>(
@@ -49,38 +54,52 @@ pub fn scan<O: Operator>(
                     O::ResidualAccessor::default(),
                 ),
             );
-            (root_first, Some(residual_u))
+            State {
+                residual: Some(residual_u),
+                first: root_first,
+                size: root_size,
+            }
         } else {
-            (root_first, None)
+            State {
+                residual: None,
+                first: root_first,
+                size: root_size,
+            }
         }
     }];
-    let step = |state: State<O>, probes| {
-        let mut results = Vec::new();
-        for (first, residual) in state {
-            let lut = if let Some(residual) = residual {
+    let step = |states: Vec<State<O>>, probes| {
+        let mut results = Vec::with_capacity(states.iter().map(|x| x.size).sum::<u32>() as _);
+        for state in states {
+            let lut = if let Some(residual) = state.residual {
                 &O::Vector::compute_lut_block(residual.as_borrowed())
             } else {
                 default_lut.as_ref().map(|x| &x.0).unwrap()
             };
             read_h1_tape(
                 relation.clone(),
-                first,
+                state.first,
                 || {
                     RAccess::new(
                         (&lut.4, (lut.0, lut.1, lut.2, lut.3, epsilon)),
                         O::Distance::block_accessor(),
                     )
                 },
-                |lowerbound, mean, first| {
-                    results.push((Reverse(lowerbound), AlwaysEqual(mean), AlwaysEqual(first)));
+                |lowerbound, mean, first, size| {
+                    results.push((
+                        Reverse(lowerbound),
+                        AlwaysEqual(mean),
+                        AlwaysEqual(first),
+                        AlwaysEqual(size),
+                    ));
                 },
             );
         }
         let mut heap = BinaryHeap::from(results);
-        let mut cache = BinaryHeap::<(Reverse<Distance>, _, _)>::new();
+        let mut cache = BinaryHeap::<(Reverse<Distance>, _)>::new();
         std::iter::from_fn(|| {
             while !heap.is_empty() && heap.peek().map(|x| x.0) > cache.peek().map(|x| x.0) {
-                let (_, AlwaysEqual(mean), AlwaysEqual(first)) = heap.pop().unwrap();
+                let (_, AlwaysEqual(mean), AlwaysEqual(first), AlwaysEqual(size)) =
+                    heap.pop().unwrap();
                 if is_residual {
                     let (dis_u, residual_u) = vectors::vector_access_1::<O, _>(
                         relation.clone(),
@@ -95,8 +114,11 @@ pub fn scan<O: Operator>(
                     );
                     cache.push((
                         Reverse(dis_u),
-                        AlwaysEqual(first),
-                        AlwaysEqual(Some(residual_u)),
+                        AlwaysEqual(State {
+                            residual: Some(residual_u),
+                            first,
+                            size,
+                        }),
                     ));
                 } else {
                     let dis_u = vectors::vector_access_1::<O, _>(
@@ -107,27 +129,34 @@ pub fn scan<O: Operator>(
                             O::DistanceAccessor::default(),
                         ),
                     );
-                    cache.push((Reverse(dis_u), AlwaysEqual(first), AlwaysEqual(None)));
+                    cache.push((
+                        Reverse(dis_u),
+                        AlwaysEqual(State {
+                            residual: None,
+                            first,
+                            size,
+                        }),
+                    ));
                 }
             }
-            let (_, AlwaysEqual(first), AlwaysEqual(mean)) = cache.pop()?;
-            Some((first, mean))
+            let (_, AlwaysEqual(state)) = cache.pop()?;
+            Some(state)
         })
         .take(probes as usize)
         .collect()
     };
     for i in (1..height_of_root).rev() {
-        state = step(state, probes[i as usize - 1]);
+        states = step(states, probes[i as usize - 1]);
     }
 
     let mut results = Vec::new();
-    for (first, residual) in state {
-        let lut = if let Some(residual) = residual.as_ref().map(|x| x.as_borrowed()) {
+    for state in states {
+        let lut = if let Some(residual) = state.residual.as_ref().map(|x| x.as_borrowed()) {
             &O::Vector::compute_lut(residual)
         } else {
             default_lut.as_ref().unwrap()
         };
-        let jump_guard = relation.read(first);
+        let jump_guard = relation.read(state.first);
         let jump_tuple = jump_guard
             .get(1)
             .expect("data corruption")

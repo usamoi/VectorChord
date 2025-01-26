@@ -19,12 +19,14 @@ pub fn bulkdelete<O: Operator>(
     let vectors_first = meta_tuple.vectors_first();
     drop(meta_guard);
     {
-        type State = Vec<u32>;
-        let mut state: State = vec![root_first];
-        let step = |state: State| {
+        struct State {
+            first: u32,
+        }
+        let mut states: Vec<State> = vec![State { first: root_first }];
+        let step = |states: Vec<State>| {
             let mut results = Vec::new();
-            for first in state {
-                let mut current = first;
+            for state in states {
+                let mut current = state.first;
                 while current != u32::MAX {
                     let h1_guard = relation.read(current);
                     for i in 1..=h1_guard.len() {
@@ -35,7 +37,7 @@ pub fn bulkdelete<O: Operator>(
                         match h1_tuple {
                             H1TupleReader::_0(h1_tuple) => {
                                 for first in h1_tuple.first().iter().copied() {
-                                    results.push(first);
+                                    results.push(State { first });
                                 }
                             }
                             H1TupleReader::_1(_) => (),
@@ -47,10 +49,10 @@ pub fn bulkdelete<O: Operator>(
             results
         };
         for _ in (1..height_of_root).rev() {
-            state = step(state);
+            states = step(states);
         }
-        for first in state {
-            let jump_guard = relation.read(first);
+        for state in states {
+            let jump_guard = relation.read(state.first);
             let jump_tuple = jump_guard
                 .get(1)
                 .expect("data corruption")
@@ -178,13 +180,15 @@ pub fn maintain<O: Operator>(relation: impl RelationWrite + Clone, delay: impl F
     let freepage_first = meta_tuple.freepage_first();
     drop(meta_guard);
 
-    let firsts = {
-        type State = Vec<u32>;
-        let mut state: State = vec![root_first];
-        let step = |state: State| {
+    let states = {
+        struct State {
+            first: u32,
+        }
+        let mut states: Vec<State> = vec![State { first: root_first }];
+        let step = |states: Vec<State>| {
             let mut results = Vec::new();
-            for first in state {
-                let mut current = first;
+            for state in states {
+                let mut current = state.first;
                 while current != u32::MAX {
                     delay();
                     let h1_guard = relation.read(current);
@@ -196,7 +200,7 @@ pub fn maintain<O: Operator>(relation: impl RelationWrite + Clone, delay: impl F
                         match h1_tuple {
                             H1TupleReader::_0(h1_tuple) => {
                                 for first in h1_tuple.first().iter().copied() {
-                                    results.push(first);
+                                    results.push(State { first });
                                 }
                             }
                             H1TupleReader::_1(_) => (),
@@ -208,13 +212,13 @@ pub fn maintain<O: Operator>(relation: impl RelationWrite + Clone, delay: impl F
             results
         };
         for _ in (1..height_of_root).rev() {
-            state = step(state);
+            states = step(states);
         }
-        state
+        states
     };
 
-    for first in firsts {
-        let mut jump_guard = relation.write(first, false);
+    for state in states {
+        let mut jump_guard = relation.write(state.first, false);
         let mut jump_tuple = jump_guard
             .get_mut(1)
             .expect("data corruption")

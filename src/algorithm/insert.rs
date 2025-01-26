@@ -26,6 +26,7 @@ pub fn insert<O: Operator>(
     assert_eq!(dims, vector.as_borrowed().dims(), "unmatched dimensions");
     let root_mean = meta_tuple.root_mean();
     let root_first = meta_tuple.root_first();
+    let root_size = meta_tuple.root_size();
     let vectors_first = meta_tuple.vectors_first();
     drop(meta_guard);
 
@@ -42,7 +43,11 @@ pub fn insert<O: Operator>(
         payload,
     );
 
-    type State<O> = (u32, Option<<O as Operator>::Vector>);
+    struct State<O: Operator> {
+        first: u32,
+        residual: Option<O::Vector>,
+        size: u32,
+    }
     let mut state: State<O> = {
         let mean = root_mean;
         if is_residual {
@@ -54,39 +59,52 @@ pub fn insert<O: Operator>(
                     O::ResidualAccessor::default(),
                 ),
             );
-            (root_first, Some(residual_u))
+            State {
+                residual: Some(residual_u),
+                first: root_first,
+                size: root_size,
+            }
         } else {
-            (root_first, None)
+            State {
+                residual: None,
+                first: root_first,
+                size: root_size,
+            }
         }
     };
     let step = |state: State<O>| {
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(state.size as _);
         {
-            let (first, residual) = state;
-            let lut = if let Some(residual) = residual {
+            let lut = if let Some(residual) = state.residual {
                 &O::Vector::compute_lut_block(residual.as_borrowed())
             } else {
                 default_lut_block.as_ref().unwrap()
             };
             read_h1_tape(
                 relation.clone(),
-                first,
+                state.first,
                 || {
                     RAccess::new(
                         (&lut.4, (lut.0, lut.1, lut.2, lut.3, 1.9f32)),
                         O::Distance::block_accessor(),
                     )
                 },
-                |lowerbound, mean, first| {
-                    results.push((Reverse(lowerbound), AlwaysEqual(mean), AlwaysEqual(first)));
+                |lowerbound, mean, first, size| {
+                    results.push((
+                        Reverse(lowerbound),
+                        AlwaysEqual(mean),
+                        AlwaysEqual(first),
+                        AlwaysEqual(size),
+                    ));
                 },
             );
         }
         let mut heap = BinaryHeap::from(results);
-        let mut cache = BinaryHeap::<(Reverse<Distance>, _, _)>::new();
+        let mut cache = BinaryHeap::<(Reverse<Distance>, _)>::new();
         {
             while !heap.is_empty() && heap.peek().map(|x| x.0) > cache.peek().map(|x| x.0) {
-                let (_, AlwaysEqual(mean), AlwaysEqual(first)) = heap.pop().unwrap();
+                let (_, AlwaysEqual(mean), AlwaysEqual(first), AlwaysEqual(size)) =
+                    heap.pop().unwrap();
                 if is_residual {
                     let (dis_u, residual_u) = vectors::vector_access_1::<O, _>(
                         relation.clone(),
@@ -101,8 +119,11 @@ pub fn insert<O: Operator>(
                     );
                     cache.push((
                         Reverse(dis_u),
-                        AlwaysEqual(first),
-                        AlwaysEqual(Some(residual_u)),
+                        AlwaysEqual(State {
+                            residual: Some(residual_u),
+                            first,
+                            size,
+                        }),
                     ));
                 } else {
                     let dis_u = vectors::vector_access_1::<O, _>(
@@ -113,19 +134,25 @@ pub fn insert<O: Operator>(
                             O::DistanceAccessor::default(),
                         ),
                     );
-                    cache.push((Reverse(dis_u), AlwaysEqual(first), AlwaysEqual(None)));
+                    cache.push((
+                        Reverse(dis_u),
+                        AlwaysEqual(State {
+                            residual: None,
+                            first,
+                            size,
+                        }),
+                    ));
                 }
             }
-            let (_, AlwaysEqual(first), AlwaysEqual(mean)) = cache.pop().unwrap();
-            (first, mean)
+            let (_, AlwaysEqual(state)) = cache.pop().unwrap();
+            state
         }
     };
     for _ in (1..height_of_root).rev() {
         state = step(state);
     }
 
-    let (first, residual) = state;
-    let code = if let Some(residual) = residual {
+    let code = if let Some(residual) = state.residual {
         O::Vector::code(residual.as_borrowed())
     } else {
         O::Vector::code(vector.as_borrowed())
@@ -140,7 +167,7 @@ pub fn insert<O: Operator>(
         elements: rabitq::pack_to_u64(&code.signs),
     });
 
-    let jump_guard = relation.read(first);
+    let jump_guard = relation.read(state.first);
     let jump_tuple = jump_guard
         .get(1)
         .expect("data corruption")
