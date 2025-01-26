@@ -10,6 +10,7 @@ pub fn prewarm<O: Operator>(index: impl RelationRead, height: i32, check: impl F
     let height_of_root = meta_tuple.height_of_root();
     let root_mean = meta_tuple.root_mean();
     let root_first = meta_tuple.root_first();
+    let root_size = meta_tuple.root_size();
     drop(meta_guard);
 
     let mut message = String::new();
@@ -18,25 +19,27 @@ pub fn prewarm<O: Operator>(index: impl RelationRead, height: i32, check: impl F
     if prewarm_max_height > height_of_root {
         return message;
     }
-    type State = Vec<u32>;
-    let mut state: State = {
-        let mut nodes = Vec::new();
-        {
-            vectors::access_1::<O, _>(index.clone(), root_mean, ());
-            nodes.push(root_first);
-        }
+    struct State {
+        first: u32,
+        size: u32,
+    }
+    let mut states: Vec<State> = {
+        vectors::access_1::<O, _>(index.clone(), root_mean, ());
         writeln!(message, "------------------------").unwrap();
-        writeln!(message, "number of nodes: {}", nodes.len()).unwrap();
+        writeln!(message, "number of nodes: {}", 1).unwrap();
         writeln!(message, "number of tuples: {}", 1).unwrap();
         writeln!(message, "number of pages: {}", 1).unwrap();
-        nodes
+        vec![State {
+            first: root_first,
+            size: root_size,
+        }]
     };
-    let mut step = |state: State| {
+    let mut step = |states: Vec<State>| {
         let mut counter_pages = 0_usize;
         let mut counter_tuples = 0_usize;
-        let mut nodes = Vec::new();
-        for list in state {
-            let mut current = list;
+        let mut nodes = Vec::with_capacity(states.iter().map(|x| x.size).sum::<u32>() as _);
+        for state in states {
+            let mut current = state.first;
             while current != u32::MAX {
                 counter_pages += 1;
                 check();
@@ -52,8 +55,11 @@ pub fn prewarm<O: Operator>(index: impl RelationRead, height: i32, check: impl F
                             for mean in h1_tuple.mean().iter().copied() {
                                 vectors::access_1::<O, _>(index.clone(), mean, ());
                             }
-                            for first in h1_tuple.first().iter().copied() {
-                                nodes.push(first);
+                            for j in 0..h1_tuple.len() {
+                                nodes.push(State {
+                                    first: h1_tuple.first()[j as usize],
+                                    size: h1_tuple.size()[j as usize],
+                                });
                             }
                         }
                         H1TupleReader::_1(_) => (),
@@ -69,14 +75,14 @@ pub fn prewarm<O: Operator>(index: impl RelationRead, height: i32, check: impl F
         nodes
     };
     for _ in (std::cmp::max(1, prewarm_max_height)..height_of_root).rev() {
-        state = step(state);
+        states = step(states);
     }
     if prewarm_max_height == 0 {
         let mut counter_pages = 0_usize;
         let mut counter_tuples = 0_usize;
         let mut counter_nodes = 0_usize;
-        for list in state {
-            let jump_guard = index.read(list);
+        for state in states {
+            let jump_guard = index.read(state.first);
             let jump_tuple = jump_guard
                 .get(1)
                 .expect("data corruption")

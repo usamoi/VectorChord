@@ -7,7 +7,7 @@ use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
 pub const ALIGN: usize = 8;
 pub type Tag = u64;
 const MAGIC: u64 = u64::from_ne_bytes(*b"vchordrq");
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 
 pub trait Tuple: 'static {
     type Reader<'a>: TupleReader<'a, Tuple = Self>;
@@ -52,11 +52,11 @@ struct MetaTupleHeader {
     is_residual: Bool,
     _padding_0: [ZeroU8; 3],
     vectors_first: u32,
-    // raw vector
     root_mean: IndexPointer,
-    // for meta tuple, it's pointers to next level
     root_first: u32,
+    root_size: u32,
     freepage_first: u32,
+    _padding_1: [ZeroU8; 4],
 }
 
 pub struct MetaTuple {
@@ -66,6 +66,7 @@ pub struct MetaTuple {
     pub vectors_first: u32,
     pub root_mean: IndexPointer,
     pub root_first: u32,
+    pub root_size: u32,
     pub freepage_first: u32,
 }
 
@@ -83,7 +84,9 @@ impl Tuple for MetaTuple {
             vectors_first: self.vectors_first,
             root_mean: self.root_mean,
             root_first: self.root_first,
+            root_size: self.root_size,
             freepage_first: self.freepage_first,
+            _padding_1: Default::default(),
         }
         .as_bytes()
         .to_vec()
@@ -133,6 +136,9 @@ impl MetaTupleReader<'_> {
     }
     pub fn root_first(self) -> u32 {
         self.header.root_first
+    }
+    pub fn root_size(self) -> u32 {
+        self.header.root_size
     }
     pub fn freepage_first(self) -> u32 {
         self.header.freepage_first
@@ -416,6 +422,7 @@ struct H1TupleHeader0 {
     factor_ip: [f32; 32],
     factor_err: [f32; 32],
     first: [u32; 32],
+    size: [u32; 32],
     len: u32,
     _padding_0: [ZeroU8; 4],
     elements_s: usize,
@@ -439,6 +446,7 @@ pub enum H1Tuple {
         factor_ip: [f32; 32],
         factor_err: [f32; 32],
         first: [u32; 32],
+        size: [u32; 32],
         len: u32,
         elements: Vec<[u8; 16]>,
     },
@@ -483,6 +491,7 @@ impl Tuple for H1Tuple {
                 factor_ip,
                 factor_err,
                 first,
+                size,
                 len,
                 elements,
             } => {
@@ -503,6 +512,7 @@ impl Tuple for H1Tuple {
                         factor_err: *factor_err,
                         first: *first,
                         len: *len,
+                        size: *size,
                         _padding_0: Default::default(),
                         elements_s,
                         elements_e,
@@ -590,6 +600,9 @@ impl<'a> H1TupleReader0<'a> {
     }
     pub fn first(self) -> &'a [u32] {
         &self.header.first[..self.header.len as usize]
+    }
+    pub fn size(self) -> &'a [u32] {
+        &self.header.size[..self.header.len as usize]
     }
     pub fn elements(&self) -> &'a [[u8; 16]] {
         self.elements

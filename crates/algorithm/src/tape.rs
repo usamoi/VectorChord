@@ -88,6 +88,7 @@ pub struct H1Branch {
     pub factor_err: f32,
     pub signs: Vec<bool>,
     pub first: u32,
+    pub size: u32,
 }
 
 pub struct H1TapeWriter<G, E> {
@@ -123,6 +124,7 @@ where
                             factor_ip: chunk.each_ref().map(|x| x.factor_ip),
                             factor_err: chunk.each_ref().map(|x| x.factor_err),
                             first: chunk.each_ref().map(|x| x.first),
+                            size: chunk.each_ref().map(|x| x.size),
                             len: chunk.len() as _,
                             elements: remain,
                         });
@@ -155,6 +157,7 @@ where
                             factor_ip: any_pack(chunk.iter().map(|x| x.factor_ip)),
                             factor_err: any_pack(chunk.iter().map(|x| x.factor_err)),
                             first: any_pack(chunk.iter().map(|x| x.first)),
+                            size: any_pack(chunk.iter().map(|x| x.size)),
                             len: chunk.len() as _,
                             elements: remain,
                         });
@@ -254,7 +257,7 @@ pub fn access_1<A>(
     index: impl RelationRead,
     first: u32,
     make_block_accessor: impl Fn() -> A + Copy,
-    mut callback: impl FnMut(Distance, IndexPointer, u32),
+    mut callback: impl FnMut(Distance, IndexPointer, u32, u32),
 ) where
     A: for<'a> Accessor1<
             [u8; 16],
@@ -282,6 +285,7 @@ pub fn access_1<A>(
                             lowerbounds[i as usize],
                             h1_tuple.mean()[i as usize],
                             h1_tuple.first()[i as usize],
+                            h1_tuple.size()[i as usize],
                         );
                     }
                 }
