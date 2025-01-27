@@ -41,12 +41,12 @@ jobs:
     strategy:
       matrix:
         version: ["14", "15", "16", "17"]
-        runner: ["ubicloud-standard-4", "ubicloud-standard-4-arm"]
+        runner: ["ubuntu-22.04", "ubuntu-22.04-arm"]
     env:
       PGRX_IMAGE: "ghcr.io/tensorchord/vectorchord-pgrx:0.12.9-nightly-2024-12-25"
       SQLLOGICTEST: "0.25.0"
-      ARCH: ${{ matrix.runner == 'ubicloud-standard-4' && 'x86_64' || 'aarch64' }}
-      PLATFORM: ${{ matrix.runner == 'ubicloud-standard-4' && 'amd64' || 'arm64' }}
+      ARCH: ${{ matrix.runner == 'ubuntu-22.04' && 'x86_64' || 'aarch64' }}
+      PLATFORM: ${{ matrix.runner == 'ubuntu-22.04' && 'amd64' || 'arm64' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -67,14 +67,14 @@ jobs:
           sudo chmod -R 777 .
 
       - name: Build
-        env:
-          SEMVER: "0.0.0"
-          VERSION: ${{ matrix.version }}
         run: |
-          docker run --rm -v .:/workspace $CACHE_ENVS $PGRX_IMAGE cargo build --lib --features pg${{ matrix.version }} --release
-          docker run --rm -v .:/workspace $CACHE_ENVS $PGRX_IMAGE ./tools/schema.sh --features pg${{ matrix.version }} --release
-          ./tools/package.sh
-          docker build -t vchord:pg${{ matrix.version }} --build-arg PG_VERSION=${{ matrix.version }} -f ./docker/Dockerfile .
+          docker run --rm -v .:/workspace $CACHE_ENVS \
+            -e SEMVER=0.0.0 \
+            -e VERSION=${{ matrix.version }} \
+            -e ARCH=$ARCH \
+            -e PLATFORM=$PLATFORM \
+            $PGRX_IMAGE ./tools/package.sh
+          docker build -t vchord:pg${{ matrix.version }} --build-arg PG_VERSION=${{ matrix.version }} --build-arg SEMVER=0.0.0 -f ./docker/Dockerfile .
 
       - name: Setup SQL Logic Test
         run: |
