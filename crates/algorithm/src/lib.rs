@@ -5,6 +5,7 @@
 
 mod build;
 mod bulkdelete;
+mod cache;
 mod freepages;
 mod insert;
 mod maintain;
@@ -20,6 +21,7 @@ pub mod types;
 
 pub use build::build;
 pub use bulkdelete::bulkdelete;
+pub use cache::cache;
 pub use insert::insert;
 pub use maintain::maintain;
 pub use prewarm::prewarm;

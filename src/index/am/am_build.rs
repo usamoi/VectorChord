@@ -2,14 +2,17 @@ use crate::datatype::typmod::Typmod;
 use crate::index::am::{Reloption, ctid_to_pointer};
 use crate::index::opclass::{Opfamily, opfamily};
 use crate::index::projection::RandomProject;
-use crate::index::storage::PostgresRelation;
+use crate::index::storage::{PostgresPage, PostgresRelation};
 use algorithm::operator::{Dot, L2, Op, Vector};
 use algorithm::types::*;
+use algorithm::{PageGuard, RelationRead, RelationWrite};
 use half::f16;
 use pgrx::pg_sys::Datum;
 use rand::Rng;
 use simd::Floating;
+use std::collections::HashMap;
 use std::num::NonZeroU64;
+use std::ops::Deref;
 use std::sync::Arc;
 use vector::vect::VectOwned;
 use vector::{VectorBorrowed, VectorOwned};
@@ -208,9 +211,24 @@ pub unsafe extern "C" fn ambuild(
             map_structures(structures, |x| InternalBuild::build_from_vecf32(&x)),
         ),
     }
-    if let Some(leader) =
-        unsafe { VchordrqLeader::enter(heap_relation, index_relation, (*index_info).ii_Concurrent) }
-    {
+    let cache = {
+        let trace = algorithm::cache(index.clone());
+        let mut dir = HashMap::<u32, usize>::new();
+        let mut pages = Vec::<Box<PostgresPage>>::new();
+        for i in trace {
+            dir.insert(i, pages.len());
+            pages.push(index.read(i).clone_into_boxed());
+        }
+        (dir, pages)
+    };
+    if let Some(leader) = unsafe {
+        VchordrqLeader::enter(
+            heap_relation,
+            index_relation,
+            (*index_info).ii_Concurrent,
+            &cache,
+        )
+    } {
         unsafe {
             parallel_build(
                 index_relation,
@@ -219,6 +237,8 @@ pub unsafe extern "C" fn ambuild(
                 leader.tablescandesc,
                 leader.vchordrqshared,
                 Some(reporter),
+                &*leader.cache_0,
+                &*leader.cache_1,
             );
             leader.wait();
             let nparticipants = leader.nparticipants;
@@ -312,6 +332,8 @@ struct VchordrqShared {
     heaprelid: pgrx::pg_sys::Oid,
     indexrelid: pgrx::pg_sys::Oid,
     isconcurrent: bool,
+    est_cache_0: usize,
+    est_cache_1: usize,
 
     /* Worker progress */
     workersdonecv: pgrx::pg_sys::ConditionVariable,
@@ -338,6 +360,8 @@ struct VchordrqLeader {
     vchordrqshared: *mut VchordrqShared,
     tablescandesc: *mut pgrx::pg_sys::ParallelTableScanDescData,
     snapshot: pgrx::pg_sys::Snapshot,
+    cache_0: *const [u8],
+    cache_1: *const [u8],
 }
 
 impl VchordrqLeader {
@@ -345,7 +369,10 @@ impl VchordrqLeader {
         heap_relation: pgrx::pg_sys::Relation,
         index_relation: pgrx::pg_sys::Relation,
         isconcurrent: bool,
+        cache: &(HashMap<u32, usize>, Vec<Box<PostgresPage>>),
     ) -> Option<Self> {
+        let cache_mapping: Vec<u8> = bincode::serialize(&cache.0).unwrap();
+
         unsafe fn compute_parallel_workers(
             heap_relation: pgrx::pg_sys::Relation,
             index_relation: pgrx::pg_sys::Relation,
@@ -402,10 +429,16 @@ impl VchordrqLeader {
         }
         let est_tablescandesc =
             unsafe { pgrx::pg_sys::table_parallelscan_estimate(heap_relation, snapshot) };
+        let est_cache_0 = cache_mapping.len();
+        let est_cache_1 = cache.1.len() * size_of::<PostgresPage>();
         unsafe {
             estimate_chunk(&mut (*pcxt).estimator, size_of::<VchordrqShared>());
             estimate_keys(&mut (*pcxt).estimator, 1);
             estimate_chunk(&mut (*pcxt).estimator, est_tablescandesc);
+            estimate_keys(&mut (*pcxt).estimator, 1);
+            estimate_chunk(&mut (*pcxt).estimator, est_cache_0);
+            estimate_keys(&mut (*pcxt).estimator, 1);
+            estimate_chunk(&mut (*pcxt).estimator, est_cache_1);
             estimate_keys(&mut (*pcxt).estimator, 1);
         }
 
@@ -433,6 +466,8 @@ impl VchordrqLeader {
                 mutex: std::mem::zeroed(),
                 nparticipantsdone: 0,
                 indtuples: 0,
+                est_cache_0,
+                est_cache_1,
             });
             pgrx::pg_sys::ConditionVariableInit(&raw mut (*vchordrqshared).workersdonecv);
             pgrx::pg_sys::SpinLockInit(&raw mut (*vchordrqshared).mutex);
@@ -446,9 +481,29 @@ impl VchordrqLeader {
             tablescandesc
         };
 
+        let cache_0 = unsafe {
+            let cache_0 = pgrx::pg_sys::shm_toc_allocate((*pcxt).toc, est_cache_0).cast::<u8>();
+            std::ptr::copy(cache_mapping.as_ptr(), cache_0, est_cache_0);
+            core::ptr::slice_from_raw_parts(cache_0, est_cache_0)
+        };
+
+        let cache_1 = unsafe {
+            let cache_1 = pgrx::pg_sys::shm_toc_allocate((*pcxt).toc, est_cache_1).cast::<u8>();
+            for i in 0..cache.1.len() {
+                std::ptr::copy(
+                    (cache.1[i].deref() as *const PostgresPage).cast::<u8>(),
+                    cache_1.cast::<PostgresPage>().add(i).cast(),
+                    size_of::<PostgresPage>(),
+                );
+            }
+            core::ptr::slice_from_raw_parts(cache_1, est_cache_1)
+        };
+
         unsafe {
             pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000001, vchordrqshared.cast());
             pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000002, tablescandesc.cast());
+            pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000003, cache_0 as _);
+            pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000004, cache_1 as _);
         }
 
         unsafe {
@@ -474,6 +529,8 @@ impl VchordrqLeader {
             nparticipants: nworkers_launched + 1,
             vchordrqshared,
             tablescandesc,
+            cache_0,
+            cache_1,
             snapshot,
         })
     }
@@ -513,6 +570,18 @@ pub unsafe extern "C" fn vchordrq_parallel_build_main(
         pgrx::pg_sys::shm_toc_lookup(toc, 0xA000000000000002, false)
             .cast::<pgrx::pg_sys::ParallelTableScanDescData>()
     };
+    let cache_0 = unsafe {
+        std::slice::from_raw_parts(
+            pgrx::pg_sys::shm_toc_lookup(toc, 0xA000000000000003, false).cast::<u8>(),
+            (*vchordrqshared).est_cache_0,
+        )
+    };
+    let cache_1 = unsafe {
+        std::slice::from_raw_parts(
+            pgrx::pg_sys::shm_toc_lookup(toc, 0xA000000000000004, false).cast::<u8>(),
+            (*vchordrqshared).est_cache_1,
+        )
+    };
     let heap_lockmode;
     let index_lockmode;
     if unsafe { !(*vchordrqshared).isconcurrent } {
@@ -530,7 +599,16 @@ pub unsafe extern "C" fn vchordrq_parallel_build_main(
     }
 
     unsafe {
-        parallel_build(index, heap, index_info, tablescandesc, vchordrqshared, None);
+        parallel_build(
+            index,
+            heap,
+            index_info,
+            tablescandesc,
+            vchordrqshared,
+            None,
+            cache_0,
+            cache_1,
+        );
     }
 
     unsafe {
@@ -546,8 +624,24 @@ unsafe fn parallel_build(
     tablescandesc: *mut pgrx::pg_sys::ParallelTableScanDescData,
     vchordrqshared: *mut VchordrqShared,
     mut reporter: Option<PostgresReporter>,
+    cache_0: &[u8],
+    cache_1: &[u8],
 ) {
     let index = unsafe { PostgresRelation::new(index_relation) };
+    let index = CachingRelation {
+        cache: {
+            let cache_0: HashMap<u32, usize> = bincode::deserialize(cache_0).unwrap();
+            assert!(cache_1.len() % size_of::<PostgresPage>() == 0);
+            let n = cache_1.len() / size_of::<PostgresPage>();
+            let cache_1 = unsafe {
+                (0..n)
+                    .map(|i| &*cache_1.as_ptr().cast::<PostgresPage>().add(i))
+                    .collect::<Vec<&PostgresPage>>()
+            };
+            &(cache_0, cache_1)
+        },
+        relation: index,
+    };
 
     let scan = unsafe { pgrx::pg_sys::table_beginscan_parallel(heap_relation, tablescandesc) };
     let opfamily = unsafe { opfamily(index_relation) };
@@ -946,5 +1040,80 @@ impl InternalBuild for VectOwned<f16> {
 
     fn build_from_vecf32(x: &[f32]) -> Self {
         Self::new(f16::vector_from_f32(x))
+    }
+}
+
+struct CachingRelation<'a, R: RelationRead> {
+    cache: &'a (HashMap<u32, usize>, Vec<&'a R::Page>),
+    relation: R,
+}
+
+impl<R: RelationRead> Clone for CachingRelation<'_, R> {
+    fn clone(&self) -> Self {
+        Self {
+            cache: self.cache,
+            relation: self.relation.clone(),
+        }
+    }
+}
+
+enum CachingRelationReadGuard<'a, G: Deref> {
+    Wrapping(G),
+    Cached(u32, &'a G::Target),
+}
+
+impl<G: PageGuard + Deref> PageGuard for CachingRelationReadGuard<'_, G> {
+    fn id(&self) -> u32 {
+        match self {
+            CachingRelationReadGuard::Wrapping(x) => x.id(),
+            CachingRelationReadGuard::Cached(id, _) => *id,
+        }
+    }
+}
+
+impl<G: Deref> Deref for CachingRelationReadGuard<'_, G> {
+    type Target = G::Target;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            CachingRelationReadGuard::Wrapping(x) => x,
+            CachingRelationReadGuard::Cached(_, page) => page,
+        }
+    }
+}
+
+impl<R: RelationRead> RelationRead for CachingRelation<'_, R> {
+    type Page = R::Page;
+
+    type ReadGuard<'a>
+        = CachingRelationReadGuard<'a, R::ReadGuard<'a>>
+    where
+        Self: 'a;
+
+    fn read(&self, id: u32) -> Self::ReadGuard<'_> {
+        if let Some(&x) = self.cache.0.get(&id) {
+            CachingRelationReadGuard::Cached(id, self.cache.1[x])
+        } else {
+            CachingRelationReadGuard::Wrapping(self.relation.read(id))
+        }
+    }
+}
+
+impl<R: RelationWrite> RelationWrite for CachingRelation<'_, R> {
+    type WriteGuard<'a>
+        = R::WriteGuard<'a>
+    where
+        Self: 'a;
+
+    fn write(&self, id: u32, tracking_freespace: bool) -> Self::WriteGuard<'_> {
+        self.relation.write(id, tracking_freespace)
+    }
+
+    fn extend(&self, tracking_freespace: bool) -> Self::WriteGuard<'_> {
+        self.relation.extend(tracking_freespace)
+    }
+
+    fn search(&self, freespace: usize) -> Option<Self::WriteGuard<'_>> {
+        self.relation.search(freespace)
     }
 }

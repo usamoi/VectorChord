@@ -42,6 +42,13 @@ impl PostgresPage {
         assert_eq!(offset_of!(Self, opaque), this.header.pd_special as usize);
         this
     }
+    pub fn clone_into_boxed(&self) -> Box<Self> {
+        let mut result = Box::new_uninit();
+        unsafe {
+            std::ptr::copy(self as *const Self, result.as_mut_ptr(), 1);
+            result.assume_init()
+        }
+    }
 }
 
 impl Page for PostgresPage {

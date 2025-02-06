@@ -27,6 +27,7 @@ random_orthogonal_matrix = { path = "./crates/random_orthogonal_matrix" }
 simd = { path = "./crates/simd" }
 vector = { path = "./crates/vector" }
 
+bincode = "1.3.3"
 half.workspace = true
 paste = "1"
 pgrx = { version = "=0.12.9", default-features = false, features = ["cshim"] }
