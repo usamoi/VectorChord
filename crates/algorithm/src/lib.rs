@@ -28,8 +28,10 @@ pub use prewarm::prewarm;
 pub use search::search;
 
 use std::ops::{Deref, DerefMut};
+use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 #[repr(C, align(8))]
+#[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct Opaque {
     pub next: u32,
     pub skip: u32,

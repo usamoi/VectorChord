@@ -27,7 +27,6 @@ random_orthogonal_matrix = { path = "./crates/random_orthogonal_matrix" }
 simd = { path = "./crates/simd" }
 vector = { path = "./crates/vector" }
 
-bincode = "1.3.3"
 half.workspace = true
 paste = "1"
 pgrx = { version = "=0.12.9", default-features = false, features = ["cshim"] }
@@ -36,6 +35,8 @@ rand.workspace = true
 serde.workspace = true
 toml = "0.8.19"
 validator.workspace = true
+zerocopy.workspace = true
+zerocopy-derive.workspace = true
 
 [patch.crates-io]
 half = { git = "https://github.com/tensorchord/half-rs.git", rev = "3f9a8843d6722bd1833de2289347640ad8770146" }

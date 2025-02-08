@@ -3,6 +3,7 @@ use crate::index::am::{Reloption, ctid_to_pointer};
 use crate::index::opclass::{Opfamily, opfamily};
 use crate::index::projection::RandomProject;
 use crate::index::storage::{PostgresPage, PostgresRelation};
+use crate::index::types::*;
 use algorithm::operator::{Dot, L2, Op, Vector};
 use algorithm::types::*;
 use algorithm::{PageGuard, RelationRead, RelationWrite};
@@ -10,7 +11,6 @@ use half::f16;
 use pgrx::pg_sys::Datum;
 use rand::Rng;
 use simd::Floating;
-use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -126,11 +126,11 @@ pub unsafe extern "C" fn ambuild(
     };
     let index = unsafe { PostgresRelation::new(index_relation) };
     let mut reporter = PostgresReporter {};
-    let structures = match vchordrq_options.build.clone() {
-        VchordrqBuildOptions::External(external_build) => {
+    let structures = match vchordrq_options.build.source.clone() {
+        VchordrqBuildSourceOptions::External(external_build) => {
             make_external_build(vector_options.clone(), opfamily, external_build.clone())
         }
-        VchordrqBuildOptions::Internal(internal_build) => {
+        VchordrqBuildSourceOptions::Internal(internal_build) => {
             let mut tuples_total = 0_u64;
             let samples = {
                 let mut rand = rand::thread_rng();
@@ -188,45 +188,53 @@ pub unsafe extern "C" fn ambuild(
     match (opfamily.vector_kind(), opfamily.distance_kind()) {
         (VectorKind::Vecf32, DistanceKind::L2) => algorithm::build::<Op<VectOwned<f32>, L2>>(
             vector_options,
-            vchordrq_options,
+            vchordrq_options.index,
             index.clone(),
             map_structures(structures, |x| InternalBuild::build_from_vecf32(&x)),
         ),
         (VectorKind::Vecf32, DistanceKind::Dot) => algorithm::build::<Op<VectOwned<f32>, Dot>>(
             vector_options,
-            vchordrq_options,
+            vchordrq_options.index,
             index.clone(),
             map_structures(structures, |x| InternalBuild::build_from_vecf32(&x)),
         ),
         (VectorKind::Vecf16, DistanceKind::L2) => algorithm::build::<Op<VectOwned<f16>, L2>>(
             vector_options,
-            vchordrq_options,
+            vchordrq_options.index,
             index.clone(),
             map_structures(structures, |x| InternalBuild::build_from_vecf32(&x)),
         ),
         (VectorKind::Vecf16, DistanceKind::Dot) => algorithm::build::<Op<VectOwned<f16>, Dot>>(
             vector_options,
-            vchordrq_options,
+            vchordrq_options.index,
             index.clone(),
             map_structures(structures, |x| InternalBuild::build_from_vecf32(&x)),
         ),
     }
-    let cache = {
-        let trace = algorithm::cache(index.clone());
-        let mut dir = HashMap::<u32, usize>::new();
-        let mut pages = Vec::<Box<PostgresPage>>::new();
-        for i in trace {
-            dir.insert(i, pages.len());
-            pages.push(index.read(i).clone_into_boxed());
+    let cache = if vchordrq_options.build.pin {
+        let mut trace = algorithm::cache(index.clone());
+        trace.sort();
+        trace.dedup();
+        if let Some(max) = trace.last().copied() {
+            let mut mapping = vec![u32::MAX; 1 + max as usize];
+            let mut pages = Vec::<Box<PostgresPage>>::with_capacity(trace.len());
+            for id in trace {
+                mapping[id as usize] = pages.len() as u32;
+                pages.push(index.read(id).clone_into_boxed());
+            }
+            vchordrq_cached::VchordrqCached::_1 { mapping, pages }
+        } else {
+            vchordrq_cached::VchordrqCached::_0 {}
         }
-        (dir, pages)
+    } else {
+        vchordrq_cached::VchordrqCached::_0 {}
     };
     if let Some(leader) = unsafe {
         VchordrqLeader::enter(
             heap_relation,
             index_relation,
             (*index_info).ii_Concurrent,
-            &cache,
+            cache,
         )
     } {
         unsafe {
@@ -236,9 +244,8 @@ pub unsafe extern "C" fn ambuild(
                 index_info,
                 leader.tablescandesc,
                 leader.vchordrqshared,
+                leader.vchordrqcached,
                 Some(reporter),
-                &*leader.cache_0,
-                &*leader.cache_1,
             );
             leader.wait();
             let nparticipants = leader.nparticipants;
@@ -332,8 +339,6 @@ struct VchordrqShared {
     heaprelid: pgrx::pg_sys::Oid,
     indexrelid: pgrx::pg_sys::Oid,
     isconcurrent: bool,
-    est_cache_0: usize,
-    est_cache_1: usize,
 
     /* Worker progress */
     workersdonecv: pgrx::pg_sys::ConditionVariable,
@@ -344,6 +349,179 @@ struct VchordrqShared {
     /* Mutable state */
     nparticipantsdone: i32,
     indtuples: u64,
+}
+
+mod vchordrq_cached {
+    pub const ALIGN: usize = 8;
+    pub type Tag = u64;
+
+    use crate::index::storage::PostgresPage;
+    use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+    use zerocopy_derive::{FromBytes, Immutable, IntoBytes, KnownLayout};
+
+    #[repr(C, align(8))]
+    #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+    struct VchordrqCachedHeader0 {}
+
+    #[repr(C, align(8))]
+    #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+    struct VchordrqCachedHeader1 {
+        mapping_s: usize,
+        mapping_e: usize,
+        pages_s: usize,
+        pages_e: usize,
+    }
+
+    pub enum VchordrqCached {
+        _0 {},
+        _1 {
+            mapping: Vec<u32>,
+            pages: Vec<Box<PostgresPage>>,
+        },
+    }
+
+    impl VchordrqCached {
+        pub fn serialize(&self) -> Vec<u8> {
+            let mut buffer = Vec::new();
+            match self {
+                VchordrqCached::_0 {} => {
+                    buffer.extend((0 as Tag).to_ne_bytes());
+                    buffer.extend(std::iter::repeat(0).take(size_of::<VchordrqCachedHeader0>()));
+                    buffer[size_of::<Tag>()..][..size_of::<VchordrqCachedHeader0>()]
+                        .copy_from_slice(VchordrqCachedHeader0 {}.as_bytes());
+                }
+                VchordrqCached::_1 { mapping, pages } => {
+                    buffer.extend((1 as Tag).to_ne_bytes());
+                    buffer.extend(std::iter::repeat(0).take(size_of::<VchordrqCachedHeader1>()));
+                    let mapping_s = buffer.len();
+                    buffer.extend(mapping.as_bytes());
+                    let mapping_e = buffer.len();
+                    while buffer.len() % ALIGN != 0 {
+                        buffer.push(0u8);
+                    }
+                    let pages_s = buffer.len();
+                    buffer.extend(pages.iter().flat_map(|x| unsafe {
+                        std::mem::transmute::<&PostgresPage, &[u8; 8192]>(x.as_ref())
+                    }));
+                    let pages_e = buffer.len();
+                    while buffer.len() % ALIGN != 0 {
+                        buffer.push(0u8);
+                    }
+                    buffer[size_of::<Tag>()..][..size_of::<VchordrqCachedHeader1>()]
+                        .copy_from_slice(
+                            VchordrqCachedHeader1 {
+                                mapping_s,
+                                mapping_e,
+                                pages_s,
+                                pages_e,
+                            }
+                            .as_bytes(),
+                        );
+                }
+            }
+            buffer
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum VchordrqCachedReader<'a> {
+        _0(#[allow(dead_code)] VchordrqCachedReader0<'a>),
+        _1(VchordrqCachedReader1<'a>),
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct VchordrqCachedReader0<'a> {
+        #[allow(dead_code)]
+        header: &'a VchordrqCachedHeader0,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct VchordrqCachedReader1<'a> {
+        #[allow(dead_code)]
+        header: &'a VchordrqCachedHeader1,
+        mapping: &'a [u32],
+        pages: &'a [PostgresPage],
+    }
+
+    impl<'a> VchordrqCachedReader1<'a> {
+        pub fn get(&self, id: u32) -> Option<&'a PostgresPage> {
+            let index = *self.mapping.get(id as usize)?;
+            if index == u32::MAX {
+                return None;
+            }
+            Some(&self.pages[index as usize])
+        }
+    }
+
+    impl<'a> VchordrqCachedReader<'a> {
+        pub fn deserialize_ref(source: &'a [u8]) -> Self {
+            let tag = u64::from_ne_bytes(std::array::from_fn(|i| source[i]));
+            match tag {
+                0 => {
+                    let checker = RefChecker::new(source);
+                    let header: &VchordrqCachedHeader0 = checker.prefix(size_of::<Tag>());
+                    Self::_0(VchordrqCachedReader0 { header })
+                }
+                1 => {
+                    let checker = RefChecker::new(source);
+                    let header: &VchordrqCachedHeader1 = checker.prefix(size_of::<Tag>());
+                    let mapping = checker.bytes(header.mapping_s, header.mapping_e);
+                    let pages =
+                        unsafe { checker.bytes_slice_unchecked(header.pages_s, header.pages_e) };
+                    Self::_1(VchordrqCachedReader1 {
+                        header,
+                        mapping,
+                        pages,
+                    })
+                }
+                _ => panic!("bad bytes"),
+            }
+        }
+    }
+
+    pub struct RefChecker<'a> {
+        bytes: &'a [u8],
+    }
+
+    impl<'a> RefChecker<'a> {
+        pub fn new(bytes: &'a [u8]) -> Self {
+            Self { bytes }
+        }
+        pub fn prefix<T: FromBytes + IntoBytes + KnownLayout + Immutable + Sized>(
+            &self,
+            s: usize,
+        ) -> &'a T {
+            let start = s;
+            let end = s + size_of::<T>();
+            let bytes = &self.bytes[start..end];
+            FromBytes::ref_from_bytes(bytes).expect("bad bytes")
+        }
+        pub fn bytes<T: FromBytes + IntoBytes + KnownLayout + Immutable + ?Sized>(
+            &self,
+            s: usize,
+            e: usize,
+        ) -> &'a T {
+            let start = s;
+            let end = e;
+            let bytes = &self.bytes[start..end];
+            FromBytes::ref_from_bytes(bytes).expect("bad bytes")
+        }
+        pub unsafe fn bytes_slice_unchecked<T>(&self, s: usize, e: usize) -> &'a [T] {
+            let start = s;
+            let end = e;
+            let bytes = &self.bytes[start..end];
+            if size_of::<T>() == 0 || bytes.len() % size_of::<T>() == 0 {
+                let ptr = bytes as *const [u8] as *const T;
+                if ptr.is_aligned() {
+                    unsafe { std::slice::from_raw_parts(ptr, bytes.len() / size_of::<T>()) }
+                } else {
+                    panic!("bad bytes")
+                }
+            } else {
+                panic!("bad bytes")
+            }
+        }
+    }
 }
 
 fn is_mvcc_snapshot(snapshot: *mut pgrx::pg_sys::SnapshotData) -> bool {
@@ -357,11 +535,10 @@ fn is_mvcc_snapshot(snapshot: *mut pgrx::pg_sys::SnapshotData) -> bool {
 struct VchordrqLeader {
     pcxt: *mut pgrx::pg_sys::ParallelContext,
     nparticipants: i32,
+    snapshot: pgrx::pg_sys::Snapshot,
     vchordrqshared: *mut VchordrqShared,
     tablescandesc: *mut pgrx::pg_sys::ParallelTableScanDescData,
-    snapshot: pgrx::pg_sys::Snapshot,
-    cache_0: *const [u8],
-    cache_1: *const [u8],
+    vchordrqcached: *const u8,
 }
 
 impl VchordrqLeader {
@@ -369,9 +546,11 @@ impl VchordrqLeader {
         heap_relation: pgrx::pg_sys::Relation,
         index_relation: pgrx::pg_sys::Relation,
         isconcurrent: bool,
-        cache: &(HashMap<u32, usize>, Vec<Box<PostgresPage>>),
+        cache: vchordrq_cached::VchordrqCached,
     ) -> Option<Self> {
-        let cache_mapping: Vec<u8> = bincode::serialize(&cache.0).unwrap();
+        let _cache = cache.serialize();
+        drop(cache);
+        let cache = _cache;
 
         unsafe fn compute_parallel_workers(
             heap_relation: pgrx::pg_sys::Relation,
@@ -429,16 +608,12 @@ impl VchordrqLeader {
         }
         let est_tablescandesc =
             unsafe { pgrx::pg_sys::table_parallelscan_estimate(heap_relation, snapshot) };
-        let est_cache_0 = cache_mapping.len();
-        let est_cache_1 = cache.1.len() * size_of::<PostgresPage>();
         unsafe {
             estimate_chunk(&mut (*pcxt).estimator, size_of::<VchordrqShared>());
             estimate_keys(&mut (*pcxt).estimator, 1);
             estimate_chunk(&mut (*pcxt).estimator, est_tablescandesc);
             estimate_keys(&mut (*pcxt).estimator, 1);
-            estimate_chunk(&mut (*pcxt).estimator, est_cache_0);
-            estimate_keys(&mut (*pcxt).estimator, 1);
-            estimate_chunk(&mut (*pcxt).estimator, est_cache_1);
+            estimate_chunk(&mut (*pcxt).estimator, 8 + cache.len());
             estimate_keys(&mut (*pcxt).estimator, 1);
         }
 
@@ -466,8 +641,6 @@ impl VchordrqLeader {
                 mutex: std::mem::zeroed(),
                 nparticipantsdone: 0,
                 indtuples: 0,
-                est_cache_0,
-                est_cache_1,
             });
             pgrx::pg_sys::ConditionVariableInit(&raw mut (*vchordrqshared).workersdonecv);
             pgrx::pg_sys::SpinLockInit(&raw mut (*vchordrqshared).mutex);
@@ -481,29 +654,17 @@ impl VchordrqLeader {
             tablescandesc
         };
 
-        let cache_0 = unsafe {
-            let cache_0 = pgrx::pg_sys::shm_toc_allocate((*pcxt).toc, est_cache_0).cast::<u8>();
-            std::ptr::copy(cache_mapping.as_ptr(), cache_0, est_cache_0);
-            core::ptr::slice_from_raw_parts(cache_0, est_cache_0)
-        };
-
-        let cache_1 = unsafe {
-            let cache_1 = pgrx::pg_sys::shm_toc_allocate((*pcxt).toc, est_cache_1).cast::<u8>();
-            for i in 0..cache.1.len() {
-                std::ptr::copy(
-                    (cache.1[i].deref() as *const PostgresPage).cast::<u8>(),
-                    cache_1.cast::<PostgresPage>().add(i).cast(),
-                    size_of::<PostgresPage>(),
-                );
-            }
-            core::ptr::slice_from_raw_parts(cache_1, est_cache_1)
+        let vchordrqcached = unsafe {
+            let x = pgrx::pg_sys::shm_toc_allocate((*pcxt).toc, 8 + cache.len()).cast::<u8>();
+            (x as *mut u64).write_unaligned(cache.len() as _);
+            std::ptr::copy(cache.as_ptr(), x.add(8), cache.len());
+            x
         };
 
         unsafe {
             pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000001, vchordrqshared.cast());
             pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000002, tablescandesc.cast());
-            pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000003, cache_0 as _);
-            pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000004, cache_1 as _);
+            pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000003, vchordrqcached.cast());
         }
 
         unsafe {
@@ -527,11 +688,10 @@ impl VchordrqLeader {
         Some(Self {
             pcxt,
             nparticipants: nworkers_launched + 1,
+            snapshot,
             vchordrqshared,
             tablescandesc,
-            cache_0,
-            cache_1,
-            snapshot,
+            vchordrqcached,
         })
     }
 
@@ -570,17 +730,10 @@ pub unsafe extern "C" fn vchordrq_parallel_build_main(
         pgrx::pg_sys::shm_toc_lookup(toc, 0xA000000000000002, false)
             .cast::<pgrx::pg_sys::ParallelTableScanDescData>()
     };
-    let cache_0 = unsafe {
-        std::slice::from_raw_parts(
-            pgrx::pg_sys::shm_toc_lookup(toc, 0xA000000000000003, false).cast::<u8>(),
-            (*vchordrqshared).est_cache_0,
-        )
-    };
-    let cache_1 = unsafe {
-        std::slice::from_raw_parts(
-            pgrx::pg_sys::shm_toc_lookup(toc, 0xA000000000000004, false).cast::<u8>(),
-            (*vchordrqshared).est_cache_1,
-        )
+    let vchordrqcached = unsafe {
+        pgrx::pg_sys::shm_toc_lookup(toc, 0xA000000000000003, false)
+            .cast::<u8>()
+            .cast_const()
     };
     let heap_lockmode;
     let index_lockmode;
@@ -605,9 +758,8 @@ pub unsafe extern "C" fn vchordrq_parallel_build_main(
             index_info,
             tablescandesc,
             vchordrqshared,
+            vchordrqcached,
             None,
-            cache_0,
-            cache_1,
         );
     }
 
@@ -623,25 +775,16 @@ unsafe fn parallel_build(
     index_info: *mut pgrx::pg_sys::IndexInfo,
     tablescandesc: *mut pgrx::pg_sys::ParallelTableScanDescData,
     vchordrqshared: *mut VchordrqShared,
+    vchordrqcached: *const u8,
     mut reporter: Option<PostgresReporter>,
-    cache_0: &[u8],
-    cache_1: &[u8],
 ) {
+    use vchordrq_cached::VchordrqCachedReader;
+    let cached = VchordrqCachedReader::deserialize_ref(unsafe {
+        let bytes = (vchordrqcached as *const u64).read_unaligned();
+        std::slice::from_raw_parts(vchordrqcached.add(8), bytes as _)
+    });
+
     let index = unsafe { PostgresRelation::new(index_relation) };
-    let index = CachingRelation {
-        cache: {
-            let cache_0: HashMap<u32, usize> = bincode::deserialize(cache_0).unwrap();
-            assert!(cache_1.len() % size_of::<PostgresPage>() == 0);
-            let n = cache_1.len() / size_of::<PostgresPage>();
-            let cache_1 = unsafe {
-                (0..n)
-                    .map(|i| &*cache_1.as_ptr().cast::<PostgresPage>().add(i))
-                    .collect::<Vec<&PostgresPage>>()
-            };
-            &(cache_0, cache_1)
-        },
-        relation: index,
-    };
 
     let scan = unsafe { pgrx::pg_sys::table_beginscan_parallel(heap_relation, tablescandesc) };
     let opfamily = unsafe { opfamily(index_relation) };
@@ -652,90 +795,184 @@ unsafe fn parallel_build(
         opfamily,
         scan,
     };
-    match (opfamily.vector_kind(), opfamily.distance_kind()) {
-        (VectorKind::Vecf32, DistanceKind::L2) => {
-            heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
-                algorithm::insert::<Op<VectOwned<f32>, L2>>(
-                    index.clone(),
-                    pointer,
-                    RandomProject::project(vector.as_borrowed()),
-                );
-                unsafe {
-                    let indtuples;
-                    {
-                        pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
-                        (*vchordrqshared).indtuples += 1;
-                        indtuples = (*vchordrqshared).indtuples;
-                        pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+    match cached {
+        VchordrqCachedReader::_0(_) => match (opfamily.vector_kind(), opfamily.distance_kind()) {
+            (VectorKind::Vecf32, DistanceKind::L2) => {
+                heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
+                    algorithm::insert::<Op<VectOwned<f32>, L2>>(
+                        index.clone(),
+                        pointer,
+                        RandomProject::project(vector.as_borrowed()),
+                    );
+                    unsafe {
+                        let indtuples;
+                        {
+                            pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                            (*vchordrqshared).indtuples += 1;
+                            indtuples = (*vchordrqshared).indtuples;
+                            pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                        }
+                        if let Some(reporter) = reporter.as_mut() {
+                            reporter.tuples_done(indtuples);
+                        }
                     }
-                    if let Some(reporter) = reporter.as_mut() {
-                        reporter.tuples_done(indtuples);
+                });
+            }
+            (VectorKind::Vecf32, DistanceKind::Dot) => {
+                heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
+                    algorithm::insert::<Op<VectOwned<f32>, Dot>>(
+                        index.clone(),
+                        pointer,
+                        RandomProject::project(vector.as_borrowed()),
+                    );
+                    unsafe {
+                        let indtuples;
+                        {
+                            pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                            (*vchordrqshared).indtuples += 1;
+                            indtuples = (*vchordrqshared).indtuples;
+                            pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                        }
+                        if let Some(reporter) = reporter.as_mut() {
+                            reporter.tuples_done(indtuples);
+                        }
                     }
+                });
+            }
+            (VectorKind::Vecf16, DistanceKind::L2) => {
+                heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
+                    algorithm::insert::<Op<VectOwned<f16>, L2>>(
+                        index.clone(),
+                        pointer,
+                        RandomProject::project(vector.as_borrowed()),
+                    );
+                    unsafe {
+                        let indtuples;
+                        {
+                            pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                            (*vchordrqshared).indtuples += 1;
+                            indtuples = (*vchordrqshared).indtuples;
+                            pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                        }
+                        if let Some(reporter) = reporter.as_mut() {
+                            reporter.tuples_done(indtuples);
+                        }
+                    }
+                });
+            }
+            (VectorKind::Vecf16, DistanceKind::Dot) => {
+                heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
+                    algorithm::insert::<Op<VectOwned<f16>, Dot>>(
+                        index.clone(),
+                        pointer,
+                        RandomProject::project(vector.as_borrowed()),
+                    );
+                    unsafe {
+                        let indtuples;
+                        {
+                            pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                            (*vchordrqshared).indtuples += 1;
+                            indtuples = (*vchordrqshared).indtuples;
+                            pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                        }
+                        if let Some(reporter) = reporter.as_mut() {
+                            reporter.tuples_done(indtuples);
+                        }
+                    }
+                });
+            }
+        },
+        VchordrqCachedReader::_1(cached) => {
+            let index = CachingRelation {
+                cache: cached,
+                relation: index,
+            };
+            match (opfamily.vector_kind(), opfamily.distance_kind()) {
+                (VectorKind::Vecf32, DistanceKind::L2) => {
+                    heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
+                        algorithm::insert::<Op<VectOwned<f32>, L2>>(
+                            index.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                        unsafe {
+                            let indtuples;
+                            {
+                                pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                                (*vchordrqshared).indtuples += 1;
+                                indtuples = (*vchordrqshared).indtuples;
+                                pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                            }
+                            if let Some(reporter) = reporter.as_mut() {
+                                reporter.tuples_done(indtuples);
+                            }
+                        }
+                    });
                 }
-            });
-        }
-        (VectorKind::Vecf32, DistanceKind::Dot) => {
-            heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
-                algorithm::insert::<Op<VectOwned<f32>, Dot>>(
-                    index.clone(),
-                    pointer,
-                    RandomProject::project(vector.as_borrowed()),
-                );
-                unsafe {
-                    let indtuples;
-                    {
-                        pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
-                        (*vchordrqshared).indtuples += 1;
-                        indtuples = (*vchordrqshared).indtuples;
-                        pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
-                    }
-                    if let Some(reporter) = reporter.as_mut() {
-                        reporter.tuples_done(indtuples);
-                    }
+                (VectorKind::Vecf32, DistanceKind::Dot) => {
+                    heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
+                        algorithm::insert::<Op<VectOwned<f32>, Dot>>(
+                            index.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                        unsafe {
+                            let indtuples;
+                            {
+                                pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                                (*vchordrqshared).indtuples += 1;
+                                indtuples = (*vchordrqshared).indtuples;
+                                pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                            }
+                            if let Some(reporter) = reporter.as_mut() {
+                                reporter.tuples_done(indtuples);
+                            }
+                        }
+                    });
                 }
-            });
-        }
-        (VectorKind::Vecf16, DistanceKind::L2) => {
-            heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
-                algorithm::insert::<Op<VectOwned<f16>, L2>>(
-                    index.clone(),
-                    pointer,
-                    RandomProject::project(vector.as_borrowed()),
-                );
-                unsafe {
-                    let indtuples;
-                    {
-                        pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
-                        (*vchordrqshared).indtuples += 1;
-                        indtuples = (*vchordrqshared).indtuples;
-                        pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
-                    }
-                    if let Some(reporter) = reporter.as_mut() {
-                        reporter.tuples_done(indtuples);
-                    }
+                (VectorKind::Vecf16, DistanceKind::L2) => {
+                    heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
+                        algorithm::insert::<Op<VectOwned<f16>, L2>>(
+                            index.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                        unsafe {
+                            let indtuples;
+                            {
+                                pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                                (*vchordrqshared).indtuples += 1;
+                                indtuples = (*vchordrqshared).indtuples;
+                                pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                            }
+                            if let Some(reporter) = reporter.as_mut() {
+                                reporter.tuples_done(indtuples);
+                            }
+                        }
+                    });
                 }
-            });
-        }
-        (VectorKind::Vecf16, DistanceKind::Dot) => {
-            heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
-                algorithm::insert::<Op<VectOwned<f16>, Dot>>(
-                    index.clone(),
-                    pointer,
-                    RandomProject::project(vector.as_borrowed()),
-                );
-                unsafe {
-                    let indtuples;
-                    {
-                        pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
-                        (*vchordrqshared).indtuples += 1;
-                        indtuples = (*vchordrqshared).indtuples;
-                        pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
-                    }
-                    if let Some(reporter) = reporter.as_mut() {
-                        reporter.tuples_done(indtuples);
-                    }
+                (VectorKind::Vecf16, DistanceKind::Dot) => {
+                    heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
+                        algorithm::insert::<Op<VectOwned<f16>, Dot>>(
+                            index.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                        unsafe {
+                            let indtuples;
+                            {
+                                pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                                (*vchordrqshared).indtuples += 1;
+                                indtuples = (*vchordrqshared).indtuples;
+                                pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                            }
+                            if let Some(reporter) = reporter.as_mut() {
+                                reporter.tuples_done(indtuples);
+                            }
+                        }
+                    });
                 }
-            });
+            }
         }
     }
     unsafe {
@@ -1043,12 +1280,12 @@ impl InternalBuild for VectOwned<f16> {
     }
 }
 
-struct CachingRelation<'a, R: RelationRead> {
-    cache: &'a (HashMap<u32, usize>, Vec<&'a R::Page>),
+struct CachingRelation<'a, R> {
+    cache: vchordrq_cached::VchordrqCachedReader1<'a>,
     relation: R,
 }
 
-impl<R: RelationRead> Clone for CachingRelation<'_, R> {
+impl<R: Clone> Clone for CachingRelation<'_, R> {
     fn clone(&self) -> Self {
         Self {
             cache: self.cache,
@@ -1082,7 +1319,7 @@ impl<G: Deref> Deref for CachingRelationReadGuard<'_, G> {
     }
 }
 
-impl<R: RelationRead> RelationRead for CachingRelation<'_, R> {
+impl<R: RelationRead<Page = PostgresPage>> RelationRead for CachingRelation<'_, R> {
     type Page = R::Page;
 
     type ReadGuard<'a>
@@ -1091,15 +1328,15 @@ impl<R: RelationRead> RelationRead for CachingRelation<'_, R> {
         Self: 'a;
 
     fn read(&self, id: u32) -> Self::ReadGuard<'_> {
-        if let Some(&x) = self.cache.0.get(&id) {
-            CachingRelationReadGuard::Cached(id, self.cache.1[x])
+        if let Some(x) = self.cache.get(id) {
+            CachingRelationReadGuard::Cached(id, x)
         } else {
             CachingRelationReadGuard::Wrapping(self.relation.read(id))
         }
     }
 }
 
-impl<R: RelationWrite> RelationWrite for CachingRelation<'_, R> {
+impl<R: RelationWrite<Page = PostgresPage>> RelationWrite for CachingRelation<'_, R> {
     type WriteGuard<'a>
         = R::WriteGuard<'a>
     where

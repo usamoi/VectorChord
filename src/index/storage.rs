@@ -16,6 +16,7 @@ const fn size_of_contents() -> usize {
 }
 
 #[repr(C, align(8))]
+#[derive(Debug)]
 pub struct PostgresPage {
     header: pgrx::pg_sys::PageHeaderData,
     content: [u8; size_of_contents()],
