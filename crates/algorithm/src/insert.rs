@@ -1,4 +1,4 @@
-use crate::linkedvec::LinkedVec;
+use crate::linked_vec::LinkedVec;
 use crate::operator::*;
 use crate::pipe::Pipe;
 use crate::tape::{access_1, append};
