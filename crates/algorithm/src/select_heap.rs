@@ -8,7 +8,7 @@ impl<T: Ord> SelectHeap<T> {
         let n = vec.len();
         if n != 0 {
             let threshold = n.saturating_sub(n.div_ceil(384));
-            vec.select_nth_unstable(threshold);
+            turboselect::select_nth_unstable(&mut vec, threshold);
             vec[threshold..].sort_unstable();
             Self {
                 threshold,

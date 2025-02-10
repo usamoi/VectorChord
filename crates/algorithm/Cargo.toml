@@ -18,6 +18,7 @@ paste = "1"
 rand.workspace = true
 serde.workspace = true
 toml = "0.8.19"
+turboselect = { git = "https://github.com/koskinev/turboselect" }
 validator.workspace = true
 zerocopy.workspace = true
 zerocopy-derive.workspace = true

@@ -27,6 +27,7 @@ dependencies = [
  "serde",
  "simd",
  "toml",
+ "turboselect",
  "validator",
  "vector",
  "zerocopy 0.8.14",
@@ -1416,6 +1417,11 @@ dependencies = [
  "toml_datetime",
  "winnow",
 ]
+
+[[package]]
+name = "turboselect"
+version = "0.1.0"
+source = "git+https://github.com/koskinev/turboselect#d8753c4ffe5b47f28670fea21d56cf3658d51b9b"
 
 [[package]]
 name = "typenum"
