@@ -13,6 +13,7 @@ mod pipe;
 mod prewarm;
 mod search;
 mod select_heap;
+mod split_heap;
 mod tape;
 mod tuples;
 mod vectors;

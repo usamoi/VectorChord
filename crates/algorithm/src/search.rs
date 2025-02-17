@@ -1,5 +1,6 @@
 use crate::operator::*;
 use crate::pipe::Pipe;
+use crate::split_heap::Pusher;
 use crate::tape::{access_0, access_1};
 use crate::tuples::*;
 use crate::{Page, RelationRead, vectors};
@@ -51,7 +52,7 @@ pub fn search<O: Operator>(
         }
     }];
     let step = |state: State<O>, probes| {
-        let mut results = Vec::new();
+        let mut results = Pusher::new();
         for (first, residual) in state {
             let lut = if let Some(residual) = residual {
                 &O::Vector::compute_lut_block(residual.as_borrowed())
@@ -68,15 +69,15 @@ pub fn search<O: Operator>(
                     )
                 },
                 |lowerbound, mean, first| {
-                    results.push((Reverse(lowerbound), AlwaysEqual(mean), AlwaysEqual(first)));
+                    results.push(Reverse(lowerbound), (AlwaysEqual(mean), AlwaysEqual(first)));
                 },
             );
         }
-        let mut heap = BinaryHeap::from(results);
+        let mut heap = results.build();
         let mut cache = BinaryHeap::<(Reverse<Distance>, _, _)>::new();
         std::iter::from_fn(|| {
-            while !heap.is_empty() && heap.peek().map(|x| x.0) > cache.peek().map(|x| x.0) {
-                let (_, AlwaysEqual(mean), AlwaysEqual(first)) = heap.pop().unwrap();
+            while !heap.is_empty() && heap.peek() > cache.peek().map(|x| x.0) {
+                let (AlwaysEqual(mean), AlwaysEqual(first)) = heap.pop().unwrap();
                 if is_residual {
                     let (dis_u, residual_u) = vectors::access_1::<O, _>(
                         index.clone(),
@@ -116,7 +117,7 @@ pub fn search<O: Operator>(
         state = step(state, probes[i as usize - 1]);
     }
 
-    let mut results = Vec::new();
+    let mut results = Pusher::new();
     for (first, residual) in state {
         let lut = if let Some(residual) = residual.as_ref().map(|x| x.as_borrowed()) {
             &O::Vector::compute_lut(residual)
@@ -140,15 +141,18 @@ pub fn search<O: Operator>(
             },
             |code| O::Distance::compute_lowerbound_binary(&lut.1, code, epsilon),
             |lowerbound, mean, payload| {
-                results.push((Reverse(lowerbound), AlwaysEqual(mean), AlwaysEqual(payload)));
+                results.push(
+                    Reverse(lowerbound),
+                    (AlwaysEqual(mean), AlwaysEqual(payload)),
+                );
             },
         );
     }
-    let mut heap = BinaryHeap::from(results);
+    let mut heap = results.build();
     let mut cache = BinaryHeap::<(Reverse<Distance>, _)>::new();
     std::iter::from_fn(move || {
-        while !heap.is_empty() && heap.peek().map(|x| x.0) > cache.peek().map(|x| x.0) {
-            let (_, AlwaysEqual(mean), AlwaysEqual(pay_u)) = heap.pop().unwrap();
+        while !heap.is_empty() && heap.peek() > cache.peek().map(|x| x.0) {
+            let (AlwaysEqual(mean), AlwaysEqual(pay_u)) = heap.pop().unwrap();
             if let Some(dis_u) = vectors::access_0::<O, _>(
                 index.clone(),
                 mean,
