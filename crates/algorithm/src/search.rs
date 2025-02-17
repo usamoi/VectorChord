@@ -11,6 +11,7 @@ use std::collections::BinaryHeap;
 use std::num::NonZeroU64;
 use vector::{VectorBorrowed, VectorOwned};
 
+#[track_caller]
 pub fn search<O: Operator>(
     index: impl RelationRead,
     vector: O::Vector,

@@ -1,20 +1,21 @@
+use crate::linked_vec::{LinkedVec, LinkedVecAccessor};
 use always_equal::AlwaysEqual;
 use std::collections::BinaryHeap;
 
 pub struct Pusher<K, V> {
-    keys: Vec<(K, AlwaysEqual<u32>)>,
-    values: Vec<V>,
+    keys: LinkedVec<(K, AlwaysEqual<u32>)>,
+    values: LinkedVec<V>,
 }
 
 impl<K, V> Pusher<K, V> {
     pub fn new() -> Self {
         Self {
-            keys: Vec::with_capacity(200_000),
-            values: Vec::with_capacity(200_000),
+            keys: LinkedVec::new(),
+            values: LinkedVec::new(),
         }
     }
     pub fn push(&mut self, k: K, v: V) {
-        self.keys.push((k, AlwaysEqual(self.values.len() as u32)));
+        self.keys.push((k, AlwaysEqual(self.values.len())));
         self.values.push(v);
     }
 }
@@ -25,15 +26,15 @@ where
 {
     pub fn build(self) -> Popper<K, V> {
         Popper {
-            keys: BinaryHeap::from(self.keys),
-            values: self.values,
+            keys: BinaryHeap::from(self.keys.into_vec()),
+            values: self.values.into_accessor(),
         }
     }
 }
 
 pub struct Popper<K, V> {
     keys: BinaryHeap<(K, AlwaysEqual<u32>)>,
-    values: Vec<V>,
+    values: LinkedVecAccessor<V>,
 }
 
 impl<K, V> Popper<K, V> {
@@ -59,6 +60,6 @@ where
 {
     pub fn pop(&mut self) -> Option<V> {
         let (_, AlwaysEqual(index)) = self.keys.pop()?;
-        Some(self.values[index as usize].clone())
+        Some(self.values.get(index).clone())
     }
 }
