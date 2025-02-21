@@ -194,29 +194,35 @@ unsafe fn aminsertinner(
     let opfamily = unsafe { crate::index::opclass::opfamily(index_relation) };
     let index = unsafe { PostgresRelation::new(index_relation) };
     let payload = ctid_to_pointer(unsafe { heap_tid.read() });
-    let vector = unsafe { opfamily.input_vector(*values.add(0), *is_null.add(0)) };
-    let Some(vector) = vector else { return false };
-    match (opfamily.vector_kind(), opfamily.distance_kind()) {
-        (VectorKind::Vecf32, DistanceKind::L2) => algorithm::insert::<Op<VectOwned<f32>, L2>>(
-            index,
-            payload,
-            RandomProject::project(VectOwned::<f32>::from_owned(vector).as_borrowed()),
-        ),
-        (VectorKind::Vecf32, DistanceKind::Dot) => algorithm::insert::<Op<VectOwned<f32>, Dot>>(
-            index,
-            payload,
-            RandomProject::project(VectOwned::<f32>::from_owned(vector).as_borrowed()),
-        ),
-        (VectorKind::Vecf16, DistanceKind::L2) => algorithm::insert::<Op<VectOwned<f16>, L2>>(
-            index,
-            payload,
-            RandomProject::project(VectOwned::<f16>::from_owned(vector).as_borrowed()),
-        ),
-        (VectorKind::Vecf16, DistanceKind::Dot) => algorithm::insert::<Op<VectOwned<f16>, Dot>>(
-            index,
-            payload,
-            RandomProject::project(VectOwned::<f16>::from_owned(vector).as_borrowed()),
-        ),
+    let vectors = unsafe { opfamily.input_data(*values.add(0), *is_null.add(0)) };
+    let Some(vectors) = vectors else { return false };
+    for vector in vectors {
+        match (opfamily.vector_kind(), opfamily.distance_kind()) {
+            (VectorKind::Vecf32, DistanceKind::L2) => algorithm::insert::<Op<VectOwned<f32>, L2>>(
+                index.clone(),
+                payload,
+                RandomProject::project(VectOwned::<f32>::from_owned(vector).as_borrowed()),
+            ),
+            (VectorKind::Vecf32, DistanceKind::Dot) => {
+                algorithm::insert::<Op<VectOwned<f32>, Dot>>(
+                    index.clone(),
+                    payload,
+                    RandomProject::project(VectOwned::<f32>::from_owned(vector).as_borrowed()),
+                )
+            }
+            (VectorKind::Vecf16, DistanceKind::L2) => algorithm::insert::<Op<VectOwned<f16>, L2>>(
+                index.clone(),
+                payload,
+                RandomProject::project(VectOwned::<f16>::from_owned(vector).as_borrowed()),
+            ),
+            (VectorKind::Vecf16, DistanceKind::Dot) => {
+                algorithm::insert::<Op<VectOwned<f16>, Dot>>(
+                    index.clone(),
+                    payload,
+                    RandomProject::project(VectOwned::<f16>::from_owned(vector).as_borrowed()),
+                )
+            }
+        }
     }
     false
 }

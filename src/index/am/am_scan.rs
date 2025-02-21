@@ -9,6 +9,7 @@ use algorithm::types::*;
 use half::f16;
 use pgrx::pg_sys::Datum;
 use std::cell::LazyCell;
+use std::collections::HashSet;
 use std::num::NonZeroU64;
 use vector::VectorOwned;
 use vector::vect::VectOwned;
@@ -61,7 +62,7 @@ pub unsafe extern "C" fn amrescan(
                 let value = (*data).sk_argument;
                 let is_null = ((*data).sk_flags & pgrx::pg_sys::SK_ISNULL as i32) != 0;
                 match (*data).sk_strategy {
-                    1 => orderbys.push(opfamily.input_vector(value, is_null)),
+                    1 => orderbys.push(opfamily.input_query(value, is_null)),
                     _ => unreachable!(),
                 }
             }
@@ -140,7 +141,11 @@ pub unsafe extern "C" fn amgettuple(
                     values.as_mut_ptr(),
                     is_null.as_mut_ptr(),
                 );
-                opfamily.input_vector(values[0], is_null[0])
+                let mut result = opfamily.input_data(values[0], is_null[0])?;
+                if result.len() != 1 {
+                    panic!("rerank_in_table is not supported on multivector columns yet")
+                }
+                result.pop()
             }
         }),
     ) {
@@ -244,28 +249,33 @@ where
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.fuse()) as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
+                            select_distinct(opfamily, vbase.fuse())
+                                as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
                         }
                         (RerankMethod::Index, None, Some(threshold)) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f32>, L2>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take_while(move |(x, _)| *x < threshold))
+                            select_distinct(
+                                opfamily,
+                                vbase.take_while(move |(x, _)| *x < threshold),
+                            )
                         }
                         (RerankMethod::Index, Some(max_scan_tuples), None) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f32>, L2>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take(max_scan_tuples as _))
+                            select_distinct(opfamily, vbase.take(max_scan_tuples as _))
                         }
                         (RerankMethod::Index, Some(max_scan_tuples), Some(threshold)) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f32>, L2>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(
+                            select_distinct(
+                                opfamily,
                                 vbase
                                     .take_while(move |(x, _)| *x < threshold)
                                     .take(max_scan_tuples as _),
@@ -283,7 +293,8 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.fuse()) as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
+                            select_distinct(opfamily, vbase.fuse())
+                                as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
                         }
                         (RerankMethod::Heap, None, Some(threshold)) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f32>, L2>, _>(
@@ -297,7 +308,10 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take_while(move |(x, _)| *x < threshold))
+                            select_distinct(
+                                opfamily,
+                                vbase.take_while(move |(x, _)| *x < threshold),
+                            )
                         }
                         (RerankMethod::Heap, Some(max_scan_tuples), None) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f32>, L2>, _>(
@@ -311,7 +325,7 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take(max_scan_tuples as _))
+                            select_distinct(opfamily, vbase.take(max_scan_tuples as _))
                         }
                         (RerankMethod::Heap, Some(max_scan_tuples), Some(threshold)) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f32>, L2>, _>(
@@ -325,7 +339,8 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(
+                            select_distinct(
+                                opfamily,
                                 vbase
                                     .take_while(move |(x, _)| *x < threshold)
                                     .take(max_scan_tuples as _),
@@ -349,28 +364,33 @@ where
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.fuse()) as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
+                            select_distinct(opfamily, vbase.fuse())
+                                as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
                         }
                         (RerankMethod::Index, None, Some(threshold)) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f32>, Dot>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take_while(move |(x, _)| *x < threshold))
+                            select_distinct(
+                                opfamily,
+                                vbase.take_while(move |(x, _)| *x < threshold),
+                            )
                         }
                         (RerankMethod::Index, Some(max_scan_tuples), None) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f32>, Dot>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take(max_scan_tuples as _))
+                            select_distinct(opfamily, vbase.take(max_scan_tuples as _))
                         }
                         (RerankMethod::Index, Some(max_scan_tuples), Some(threshold)) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f32>, Dot>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(
+                            select_distinct(
+                                opfamily,
                                 vbase
                                     .take_while(move |(x, _)| *x < threshold)
                                     .take(max_scan_tuples as _),
@@ -388,7 +408,8 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.fuse()) as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
+                            select_distinct(opfamily, vbase.fuse())
+                                as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
                         }
                         (RerankMethod::Heap, None, Some(threshold)) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f32>, Dot>, _>(
@@ -402,7 +423,10 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take_while(move |(x, _)| *x < threshold))
+                            select_distinct(
+                                opfamily,
+                                vbase.take_while(move |(x, _)| *x < threshold),
+                            )
                         }
                         (RerankMethod::Heap, Some(max_scan_tuples), None) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f32>, Dot>, _>(
@@ -416,7 +440,7 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take(max_scan_tuples as _))
+                            select_distinct(opfamily, vbase.take(max_scan_tuples as _))
                         }
                         (RerankMethod::Heap, Some(max_scan_tuples), Some(threshold)) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f32>, Dot>, _>(
@@ -430,7 +454,8 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(
+                            select_distinct(
+                                opfamily,
                                 vbase
                                     .take_while(move |(x, _)| *x < threshold)
                                     .take(max_scan_tuples as _),
@@ -454,28 +479,33 @@ where
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.fuse()) as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
+                            select_distinct(opfamily, vbase.fuse())
+                                as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
                         }
                         (RerankMethod::Index, None, Some(threshold)) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f16>, L2>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take_while(move |(x, _)| *x < threshold))
+                            select_distinct(
+                                opfamily,
+                                vbase.take_while(move |(x, _)| *x < threshold),
+                            )
                         }
                         (RerankMethod::Index, Some(max_scan_tuples), None) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f16>, L2>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take(max_scan_tuples as _))
+                            select_distinct(opfamily, vbase.take(max_scan_tuples as _))
                         }
                         (RerankMethod::Index, Some(max_scan_tuples), Some(threshold)) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f16>, L2>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(
+                            select_distinct(
+                                opfamily,
                                 vbase
                                     .take_while(move |(x, _)| *x < threshold)
                                     .take(max_scan_tuples as _),
@@ -493,7 +523,8 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.fuse()) as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
+                            select_distinct(opfamily, vbase.fuse())
+                                as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
                         }
                         (RerankMethod::Heap, None, Some(threshold)) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f16>, L2>, _>(
@@ -507,7 +538,10 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take_while(move |(x, _)| *x < threshold))
+                            select_distinct(
+                                opfamily,
+                                vbase.take_while(move |(x, _)| *x < threshold),
+                            )
                         }
                         (RerankMethod::Heap, Some(max_scan_tuples), None) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f16>, L2>, _>(
@@ -521,7 +555,7 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take(max_scan_tuples as _))
+                            select_distinct(opfamily, vbase.take(max_scan_tuples as _))
                         }
                         (RerankMethod::Heap, Some(max_scan_tuples), Some(threshold)) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f16>, L2>, _>(
@@ -535,7 +569,8 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(
+                            select_distinct(
+                                opfamily,
                                 vbase
                                     .take_while(move |(x, _)| *x < threshold)
                                     .take(max_scan_tuples as _),
@@ -559,28 +594,33 @@ where
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.fuse()) as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
+                            select_distinct(opfamily, vbase.fuse())
+                                as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
                         }
                         (RerankMethod::Index, None, Some(threshold)) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f16>, Dot>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take_while(move |(x, _)| *x < threshold))
+                            select_distinct(
+                                opfamily,
+                                vbase.take_while(move |(x, _)| *x < threshold),
+                            )
                         }
                         (RerankMethod::Index, Some(max_scan_tuples), None) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f16>, Dot>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take(max_scan_tuples as _))
+                            select_distinct(opfamily, vbase.take(max_scan_tuples as _))
                         }
                         (RerankMethod::Index, Some(max_scan_tuples), Some(threshold)) => {
                             let vbase = algorithm::rerank_index::<Op<VectOwned<f16>, Dot>>(
                                 relation, vector, results,
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(
+                            select_distinct(
+                                opfamily,
                                 vbase
                                     .take_while(move |(x, _)| *x < threshold)
                                     .take(max_scan_tuples as _),
@@ -598,7 +638,8 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.fuse()) as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
+                            select_distinct(opfamily, vbase.fuse())
+                                as Box<dyn Iterator<Item = (f32, NonZeroU64)>>
                         }
                         (RerankMethod::Heap, None, Some(threshold)) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f16>, Dot>, _>(
@@ -612,7 +653,10 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take_while(move |(x, _)| *x < threshold))
+                            select_distinct(
+                                opfamily,
+                                vbase.take_while(move |(x, _)| *x < threshold),
+                            )
                         }
                         (RerankMethod::Heap, Some(max_scan_tuples), None) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f16>, Dot>, _>(
@@ -626,7 +670,7 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(vbase.take(max_scan_tuples as _))
+                            select_distinct(opfamily, vbase.take(max_scan_tuples as _))
                         }
                         (RerankMethod::Heap, Some(max_scan_tuples), Some(threshold)) => {
                             let vbase = algorithm::rerank_heap::<Op<VectOwned<f16>, Dot>, _>(
@@ -640,7 +684,8 @@ where
                                 },
                             )
                             .map(move |(distance, payload)| (opfamily.output(distance), payload));
-                            Box::new(
+                            select_distinct(
+                                opfamily,
                                 vbase
                                     .take_while(move |(x, _)| *x < threshold)
                                     .take(max_scan_tuples as _),
@@ -656,6 +701,26 @@ where
         Scanning::Initial { .. } => unreachable!(),
         Scanning::Vbase { vbase, recheck } => vbase.next().map(|(_, x)| (x, *recheck)),
         Scanning::Empty {} => None,
+    }
+}
+
+fn select_distinct<'a>(
+    opfamily: Opfamily,
+    mut iter: impl Iterator<Item = (f32, NonZeroU64)> + 'a,
+) -> Box<dyn Iterator<Item = (f32, NonZeroU64)> + 'a> {
+    match opfamily {
+        Opfamily::VectorL2
+        | Opfamily::VectorIp
+        | Opfamily::VectorCosine
+        | Opfamily::HalfvecL2
+        | Opfamily::HalfvecIp
+        | Opfamily::HalfvecCosine => Box::new(iter),
+        Opfamily::VectorMaxsimL2 | Opfamily::VectorMaxsimIp | Opfamily::VectorMaxsimCosine => {
+            let mut check = HashSet::new();
+            Box::new(std::iter::from_fn(move || {
+                iter.next().filter(|(_, p)| check.insert(*p))
+            }))
+        }
     }
 }
 

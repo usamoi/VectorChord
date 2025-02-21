@@ -26,7 +26,7 @@ struct Heap {
 }
 
 impl Heap {
-    fn traverse<V: Vector, F: FnMut((NonZeroU64, V))>(&self, progress: bool, callback: F) {
+    fn traverse<V: Vector, F: FnMut((NonZeroU64, Vec<V>))>(&self, progress: bool, callback: F) {
         pub struct State<'a, F> {
             pub this: &'a Heap,
             pub callback: F,
@@ -40,14 +40,14 @@ impl Heap {
             _tuple_is_alive: bool,
             state: *mut core::ffi::c_void,
         ) where
-            F: FnMut((NonZeroU64, V)),
+            F: FnMut((NonZeroU64, Vec<V>)),
         {
             let state = unsafe { &mut *state.cast::<State<F>>() };
             let opfamily = state.this.opfamily;
-            let vector = unsafe { opfamily.input_vector(*values.add(0), *is_null.add(0)) };
+            let vectors = unsafe { opfamily.input_data(*values.add(0), *is_null.add(0)) };
             let pointer = unsafe { ctid_to_pointer(ctid.read()) };
-            if let Some(vector) = vector {
-                (state.callback)((pointer, V::from_owned(vector)));
+            if let Some(vectors) = vectors {
+                (state.callback)((pointer, vectors.into_iter().map(V::from_owned).collect()));
             }
         }
         let table_am = unsafe { &*(*self.heap_relation).rd_tableam };
@@ -144,37 +144,43 @@ pub unsafe extern "C" fn ambuild(
                 let mut number_of_samples = 0_u32;
                 match opfamily.vector_kind() {
                     VectorKind::Vecf32 => {
-                        heap.traverse(false, |(_, vector): (_, VectOwned<f32>)| {
-                            let vector = vector.as_borrowed();
-                            assert_eq!(
-                                vector_options.dims,
-                                vector.dims(),
-                                "invalid vector dimensions"
-                            );
-                            if number_of_samples < max_number_of_samples {
-                                samples.push(VectOwned::<f32>::build_to_vecf32(vector));
-                                number_of_samples += 1;
-                            } else {
-                                let index = rand.random_range(0..max_number_of_samples) as usize;
-                                samples[index] = VectOwned::<f32>::build_to_vecf32(vector);
+                        heap.traverse(false, |(_, vectors): (_, Vec<VectOwned<f32>>)| {
+                            for vector in vectors {
+                                let vector = vector.as_borrowed();
+                                assert_eq!(
+                                    vector_options.dims,
+                                    vector.dims(),
+                                    "invalid vector dimensions"
+                                );
+                                if number_of_samples < max_number_of_samples {
+                                    samples.push(VectOwned::<f32>::build_to_vecf32(vector));
+                                    number_of_samples += 1;
+                                } else {
+                                    let index =
+                                        rand.random_range(0..max_number_of_samples) as usize;
+                                    samples[index] = VectOwned::<f32>::build_to_vecf32(vector);
+                                }
                             }
                             tuples_total += 1;
                         });
                     }
                     VectorKind::Vecf16 => {
-                        heap.traverse(false, |(_, vector): (_, VectOwned<f16>)| {
-                            let vector = vector.as_borrowed();
-                            assert_eq!(
-                                vector_options.dims,
-                                vector.dims(),
-                                "invalid vector dimensions"
-                            );
-                            if number_of_samples < max_number_of_samples {
-                                samples.push(VectOwned::<f16>::build_to_vecf32(vector));
-                                number_of_samples += 1;
-                            } else {
-                                let index = rand.random_range(0..max_number_of_samples) as usize;
-                                samples[index] = VectOwned::<f16>::build_to_vecf32(vector);
+                        heap.traverse(false, |(_, vectors): (_, Vec<VectOwned<f16>>)| {
+                            for vector in vectors {
+                                let vector = vector.as_borrowed();
+                                assert_eq!(
+                                    vector_options.dims,
+                                    vector.dims(),
+                                    "invalid vector dimensions"
+                                );
+                                if number_of_samples < max_number_of_samples {
+                                    samples.push(VectOwned::<f16>::build_to_vecf32(vector));
+                                    number_of_samples += 1;
+                                } else {
+                                    let index =
+                                        rand.random_range(0..max_number_of_samples) as usize;
+                                    samples[index] = VectOwned::<f16>::build_to_vecf32(vector);
+                                }
                             }
                             tuples_total += 1;
                         });
@@ -270,45 +276,53 @@ pub unsafe extern "C" fn ambuild(
         let relation = unsafe { PostgresRelation::new(index_relation) };
         match (opfamily.vector_kind(), opfamily.distance_kind()) {
             (VectorKind::Vecf32, DistanceKind::L2) => {
-                heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
-                    algorithm::insert::<Op<VectOwned<f32>, L2>>(
-                        relation.clone(),
-                        pointer,
-                        RandomProject::project(vector.as_borrowed()),
-                    );
+                heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f32>>)| {
+                    for vector in vectors {
+                        algorithm::insert::<Op<VectOwned<f32>, L2>>(
+                            relation.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                    }
                     indtuples += 1;
                     reporter.tuples_done(indtuples);
                 });
             }
             (VectorKind::Vecf32, DistanceKind::Dot) => {
-                heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
-                    algorithm::insert::<Op<VectOwned<f32>, Dot>>(
-                        relation.clone(),
-                        pointer,
-                        RandomProject::project(vector.as_borrowed()),
-                    );
+                heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f32>>)| {
+                    for vector in vectors {
+                        algorithm::insert::<Op<VectOwned<f32>, Dot>>(
+                            relation.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                    }
                     indtuples += 1;
                     reporter.tuples_done(indtuples);
                 });
             }
             (VectorKind::Vecf16, DistanceKind::L2) => {
-                heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
-                    algorithm::insert::<Op<VectOwned<f16>, L2>>(
-                        relation.clone(),
-                        pointer,
-                        RandomProject::project(vector.as_borrowed()),
-                    );
+                heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f16>>)| {
+                    for vector in vectors {
+                        algorithm::insert::<Op<VectOwned<f16>, L2>>(
+                            relation.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                    }
                     indtuples += 1;
                     reporter.tuples_done(indtuples);
                 });
             }
             (VectorKind::Vecf16, DistanceKind::Dot) => {
-                heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
-                    algorithm::insert::<Op<VectOwned<f16>, Dot>>(
-                        relation.clone(),
-                        pointer,
-                        RandomProject::project(vector.as_borrowed()),
-                    );
+                heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f16>>)| {
+                    for vector in vectors {
+                        algorithm::insert::<Op<VectOwned<f16>, Dot>>(
+                            relation.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                    }
                     indtuples += 1;
                     reporter.tuples_done(indtuples);
                 });
@@ -799,12 +813,14 @@ unsafe fn parallel_build(
     match cached {
         VchordrqCachedReader::_0(_) => match (opfamily.vector_kind(), opfamily.distance_kind()) {
             (VectorKind::Vecf32, DistanceKind::L2) => {
-                heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
-                    algorithm::insert::<Op<VectOwned<f32>, L2>>(
-                        index.clone(),
-                        pointer,
-                        RandomProject::project(vector.as_borrowed()),
-                    );
+                heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f32>>)| {
+                    for vector in vectors {
+                        algorithm::insert::<Op<VectOwned<f32>, L2>>(
+                            index.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                    }
                     unsafe {
                         let indtuples;
                         {
@@ -820,12 +836,14 @@ unsafe fn parallel_build(
                 });
             }
             (VectorKind::Vecf32, DistanceKind::Dot) => {
-                heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
-                    algorithm::insert::<Op<VectOwned<f32>, Dot>>(
-                        index.clone(),
-                        pointer,
-                        RandomProject::project(vector.as_borrowed()),
-                    );
+                heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f32>>)| {
+                    for vector in vectors {
+                        algorithm::insert::<Op<VectOwned<f32>, Dot>>(
+                            index.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                    }
                     unsafe {
                         let indtuples;
                         {
@@ -841,12 +859,14 @@ unsafe fn parallel_build(
                 });
             }
             (VectorKind::Vecf16, DistanceKind::L2) => {
-                heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
-                    algorithm::insert::<Op<VectOwned<f16>, L2>>(
-                        index.clone(),
-                        pointer,
-                        RandomProject::project(vector.as_borrowed()),
-                    );
+                heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f16>>)| {
+                    for vector in vectors {
+                        algorithm::insert::<Op<VectOwned<f16>, L2>>(
+                            index.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                    }
                     unsafe {
                         let indtuples;
                         {
@@ -862,12 +882,14 @@ unsafe fn parallel_build(
                 });
             }
             (VectorKind::Vecf16, DistanceKind::Dot) => {
-                heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
-                    algorithm::insert::<Op<VectOwned<f16>, Dot>>(
-                        index.clone(),
-                        pointer,
-                        RandomProject::project(vector.as_borrowed()),
-                    );
+                heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f16>>)| {
+                    for vector in vectors {
+                        algorithm::insert::<Op<VectOwned<f16>, Dot>>(
+                            index.clone(),
+                            pointer,
+                            RandomProject::project(vector.as_borrowed()),
+                        );
+                    }
                     unsafe {
                         let indtuples;
                         {
@@ -890,12 +912,14 @@ unsafe fn parallel_build(
             };
             match (opfamily.vector_kind(), opfamily.distance_kind()) {
                 (VectorKind::Vecf32, DistanceKind::L2) => {
-                    heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
-                        algorithm::insert::<Op<VectOwned<f32>, L2>>(
-                            index.clone(),
-                            pointer,
-                            RandomProject::project(vector.as_borrowed()),
-                        );
+                    heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f32>>)| {
+                        for vector in vectors {
+                            algorithm::insert::<Op<VectOwned<f32>, L2>>(
+                                index.clone(),
+                                pointer,
+                                RandomProject::project(vector.as_borrowed()),
+                            );
+                        }
                         unsafe {
                             let indtuples;
                             {
@@ -911,12 +935,14 @@ unsafe fn parallel_build(
                     });
                 }
                 (VectorKind::Vecf32, DistanceKind::Dot) => {
-                    heap.traverse(true, |(pointer, vector): (_, VectOwned<f32>)| {
-                        algorithm::insert::<Op<VectOwned<f32>, Dot>>(
-                            index.clone(),
-                            pointer,
-                            RandomProject::project(vector.as_borrowed()),
-                        );
+                    heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f32>>)| {
+                        for vector in vectors {
+                            algorithm::insert::<Op<VectOwned<f32>, Dot>>(
+                                index.clone(),
+                                pointer,
+                                RandomProject::project(vector.as_borrowed()),
+                            );
+                        }
                         unsafe {
                             let indtuples;
                             {
@@ -932,12 +958,14 @@ unsafe fn parallel_build(
                     });
                 }
                 (VectorKind::Vecf16, DistanceKind::L2) => {
-                    heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
-                        algorithm::insert::<Op<VectOwned<f16>, L2>>(
-                            index.clone(),
-                            pointer,
-                            RandomProject::project(vector.as_borrowed()),
-                        );
+                    heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f16>>)| {
+                        for vector in vectors {
+                            algorithm::insert::<Op<VectOwned<f16>, L2>>(
+                                index.clone(),
+                                pointer,
+                                RandomProject::project(vector.as_borrowed()),
+                            );
+                        }
                         unsafe {
                             let indtuples;
                             {
@@ -953,12 +981,14 @@ unsafe fn parallel_build(
                     });
                 }
                 (VectorKind::Vecf16, DistanceKind::Dot) => {
-                    heap.traverse(true, |(pointer, vector): (_, VectOwned<f16>)| {
-                        algorithm::insert::<Op<VectOwned<f16>, Dot>>(
-                            index.clone(),
-                            pointer,
-                            RandomProject::project(vector.as_borrowed()),
-                        );
+                    heap.traverse(true, |(pointer, vectors): (_, Vec<VectOwned<f16>>)| {
+                        for vector in vectors {
+                            algorithm::insert::<Op<VectOwned<f16>, Dot>>(
+                                index.clone(),
+                                pointer,
+                                RandomProject::project(vector.as_borrowed()),
+                            );
+                        }
                         unsafe {
                             let indtuples;
                             {
