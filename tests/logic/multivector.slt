@@ -2,10 +2,17 @@ statement ok
 CREATE TABLE t (id integer, val vector(2)[]);
 
 statement ok
-INSERT INTO t (id, val) SELECT id, ARRAY[ARRAY[(10 * id)::real, 10 * id]::vector, ARRAY[(100005 - 10 * id)::real, (100005 - 10 * id)::real]::vector] FROM generate_series(1, 10000) s(id);
+INSERT INTO t (id, val)
+SELECT id,
+    ARRAY[
+        ARRAY[cos(((id + 0) % 10000) / 10000.0 * 6.283185307179586), sin(((id + 0) % 10000) / 10000.0 * 6.283185307179586)]::vector,
+        ARRAY[cos(((id + 22) % 10000) / 10000.0 * 6.283185307179586), sin(((id + 22) % 10000) / 10000.0 * 6.283185307179586)]::vector,
+        ARRAY[cos(((id + 777) % 10000) / 10000.0 * 6.283185307179586), sin(((id + 777) % 10000) / 10000.0 * 6.283185307179586)]::vector
+    ]
+FROM generate_series(1, 10000) s(id);
 
 statement ok
-CREATE INDEX t_val_idx ON t USING vchordrq (val vector_maxsim_l2_ops)
+CREATE INDEX t_val_idx ON t USING vchordrq (val vector_maxsim_ip_ops)
 WITH (options = $$
 build.internal.lists = []
 $$);
@@ -14,54 +21,32 @@ statement ok
 SET vchordrq.probes = '';
 
 statement ok
-SET vchordrq.max_maxsim_tuples = 100;
+SET vchordrq.max_maxsim_tuples = 3000;
 
 statement ok
 SET enable_seqscan TO off;
 
 query I
-SELECT id FROM t ORDER BY val |<->| ARRAY['[19, 19]'::vector] limit 18;
+SELECT id FROM t ORDER BY val |<#>| ARRAY['[0.7197411498053302, 0.6942425205048314]'::vector, '[0.10645067063129976, 0.9943179847122079]'::vector] limit 18;
 ----
-2
-9999
-9998
-1
-3
-10000
-9997
-4
-9996
-5
-9995
-6
-9994
-7
-9993
-8
-9992
-9
-
-query I
-SELECT id FROM t ORDER BY val |<->| ARRAY['[19, 19]'::vector, '[11.1, 11.1]'] limit 18;
-----
-9999
-2
-1
-9998
-10000
-3
-9997
-4
-9996
-5
-9995
-6
-9994
-7
-9993
-8
-9992
-9
+1387
+1388
+1386
+1389
+1385
+1390
+1384
+1391
+1383
+1392
+1382
+1393
+1381
+1394
+1380
+1395
+1379
+1396
 
 statement ok
 DROP INDEX t_val_idx;

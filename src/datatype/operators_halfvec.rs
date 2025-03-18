@@ -77,24 +77,6 @@ fn _vchord_halfvec_sphere_cosine_in(
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
-fn _vchord_halfvec_operator_maxsim_l2(
-    lhs: Array<'_, HalfvecInput<'_>>,
-    rhs: Array<'_, HalfvecInput<'_>>,
-) -> f32 {
-    let mut maxsim = 0.0f32;
-    for rhs in rhs.iter().flatten() {
-        let mut d = f32::INFINITY;
-        for lhs in lhs.iter().flatten() {
-            let lhs = lhs.as_borrowed();
-            let rhs = rhs.as_borrowed();
-            d = d.min(VectBorrowed::operator_l2(lhs, rhs).to_f32().sqrt());
-        }
-        maxsim += d;
-    }
-    maxsim
-}
-
-#[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchord_halfvec_operator_maxsim_ip(
     lhs: Array<'_, HalfvecInput<'_>>,
     rhs: Array<'_, HalfvecInput<'_>>,

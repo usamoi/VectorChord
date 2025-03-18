@@ -39,11 +39,6 @@ fn _vchordrq_support_halfvec_cosine_ops() -> String {
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
-fn _vchordrq_support_vector_maxsim_l2_ops() -> String {
-    "vector_maxsim_l2_ops".to_string()
-}
-
-#[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_vector_maxsim_ip_ops() -> String {
     "vector_maxsim_ip_ops".to_string()
 }
@@ -51,11 +46,6 @@ fn _vchordrq_support_vector_maxsim_ip_ops() -> String {
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_vector_maxsim_cosine_ops() -> String {
     "vector_maxsim_cosine_ops".to_string()
-}
-
-#[pgrx::pg_extern(immutable, strict, parallel_safe)]
-fn _vchordrq_support_halfvec_maxsim_l2_ops() -> String {
-    "halfvec_maxsim_l2_ops".to_string()
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
@@ -81,10 +71,8 @@ pub enum Opfamily {
     HalfvecL2,
     HalfvecIp,
     HalfvecCosine,
-    VectorMaxsimL2,
     VectorMaxsimIp,
     VectorMaxsimCosine,
-    HalfvecMaxsimL2,
     HalfvecMaxsimIp,
     HalfvecMaxsimCosine,
 }
@@ -93,13 +81,13 @@ impl Opfamily {
     fn input(self, vector: BorrowedVector<'_>) -> OwnedVector {
         use {BorrowedVector as B, OwnedVector as O};
         match (vector, self) {
-            (B::Vecf32(x), Self::VectorL2 | Self::VectorMaxsimL2) => O::Vecf32(x.own()),
+            (B::Vecf32(x), Self::VectorL2) => O::Vecf32(x.own()),
             (B::Vecf32(x), Self::VectorIp | Self::VectorMaxsimIp) => O::Vecf32(x.own()),
             (B::Vecf32(x), Self::VectorCosine | Self::VectorMaxsimCosine) => {
                 O::Vecf32(x.function_normalize())
             }
             (B::Vecf32(_), _) => unreachable!(),
-            (B::Vecf16(x), Self::HalfvecL2 | Self::HalfvecMaxsimL2) => O::Vecf16(x.own()),
+            (B::Vecf16(x), Self::HalfvecL2) => O::Vecf16(x.own()),
             (B::Vecf16(x), Self::HalfvecIp | Self::HalfvecMaxsimIp) => O::Vecf16(x.own()),
             (B::Vecf16(x), Self::HalfvecCosine | Self::HalfvecMaxsimCosine) => {
                 O::Vecf16(x.function_normalize())
@@ -120,7 +108,7 @@ impl Opfamily {
                 let vector = unsafe { HalfvecInput::from_datum(datum, false).unwrap() };
                 vec![(self.input(BorrowedVector::Vecf16(vector.as_borrowed())), 0)]
             }
-            Self::VectorMaxsimL2 | Self::VectorMaxsimIp | Self::VectorMaxsimCosine => {
+            Self::VectorMaxsimIp | Self::VectorMaxsimCosine => {
                 let vectors =
                     unsafe { pgrx::Array::<VectorInput>::from_datum(datum, false).unwrap() };
                 let mut result = Vec::with_capacity(vectors.len());
@@ -132,7 +120,7 @@ impl Opfamily {
                 }
                 result
             }
-            Self::HalfvecMaxsimL2 | Self::HalfvecMaxsimIp | Self::HalfvecMaxsimCosine => {
+            Self::HalfvecMaxsimIp | Self::HalfvecMaxsimCosine => {
                 let vectors =
                     unsafe { pgrx::Array::<HalfvecInput>::from_datum(datum, false).unwrap() };
                 let mut result = Vec::with_capacity(vectors.len());
@@ -158,7 +146,6 @@ impl Opfamily {
             Self::VectorL2
             | Self::VectorIp
             | Self::VectorCosine
-            | Self::VectorMaxsimL2
             | Self::VectorMaxsimIp
             | Self::VectorMaxsimCosine => {
                 let vector = tuple.get_by_index::<VectorOutput>(attno_1).unwrap()?;
@@ -167,7 +154,6 @@ impl Opfamily {
             Self::HalfvecL2
             | Self::HalfvecIp
             | Self::HalfvecCosine
-            | Self::HalfvecMaxsimL2
             | Self::HalfvecMaxsimIp
             | Self::HalfvecMaxsimCosine => {
                 let vector = tuple.get_by_index::<HalfvecOutput>(attno_1).unwrap()?;
@@ -185,7 +171,6 @@ impl Opfamily {
             Self::VectorL2
             | Self::VectorIp
             | Self::VectorCosine
-            | Self::VectorMaxsimL2
             | Self::VectorMaxsimIp
             | Self::VectorMaxsimCosine => {
                 let vector = unsafe { VectorInput::from_datum(datum, false).unwrap() };
@@ -194,7 +179,6 @@ impl Opfamily {
             Self::HalfvecL2
             | Self::HalfvecIp
             | Self::HalfvecCosine
-            | Self::HalfvecMaxsimL2
             | Self::HalfvecMaxsimIp
             | Self::HalfvecMaxsimCosine => {
                 let vector = unsafe { HalfvecInput::from_datum(datum, false).unwrap() };
@@ -211,7 +195,6 @@ impl Opfamily {
             Self::VectorL2
             | Self::VectorIp
             | Self::VectorCosine
-            | Self::VectorMaxsimL2
             | Self::VectorMaxsimIp
             | Self::VectorMaxsimCosine => {
                 let vectors =
@@ -225,7 +208,6 @@ impl Opfamily {
             Self::HalfvecL2
             | Self::HalfvecIp
             | Self::HalfvecCosine
-            | Self::HalfvecMaxsimL2
             | Self::HalfvecMaxsimIp
             | Self::HalfvecMaxsimCosine => {
                 let vectors =
@@ -245,9 +227,7 @@ impl Opfamily {
             | Self::HalfvecCosine
             | Self::VectorMaxsimCosine
             | Self::HalfvecMaxsimCosine => x.to_f32() + 1.0f32,
-            Self::VectorL2 | Self::HalfvecL2 | Self::VectorMaxsimL2 | Self::HalfvecMaxsimL2 => {
-                x.to_f32().sqrt()
-            }
+            Self::VectorL2 | Self::HalfvecL2 => x.to_f32().sqrt(),
             Self::VectorIp | Self::HalfvecIp | Self::VectorMaxsimIp | Self::HalfvecMaxsimIp => {
                 x.to_f32()
             }
@@ -255,9 +235,7 @@ impl Opfamily {
     }
     pub const fn distance_kind(self) -> DistanceKind {
         match self {
-            Self::VectorL2 | Self::HalfvecL2 | Self::VectorMaxsimL2 | Self::HalfvecMaxsimL2 => {
-                DistanceKind::L2
-            }
+            Self::VectorL2 | Self::HalfvecL2 => DistanceKind::L2,
             Self::VectorIp
             | Self::HalfvecIp
             | Self::VectorCosine
@@ -273,13 +251,11 @@ impl Opfamily {
             Self::VectorL2
             | Self::VectorIp
             | Self::VectorCosine
-            | Self::VectorMaxsimL2
             | Self::VectorMaxsimIp
             | Self::VectorMaxsimCosine => VectorKind::Vecf32,
             Self::HalfvecL2
             | Self::HalfvecIp
             | Self::HalfvecCosine
-            | Self::HalfvecMaxsimL2
             | Self::HalfvecMaxsimIp
             | Self::HalfvecMaxsimCosine => VectorKind::Vecf16,
         }
@@ -324,10 +300,8 @@ pub unsafe fn opfamily(index_relation: pgrx::pg_sys::Relation) -> Opfamily {
         "halfvec_l2_ops" => Opfamily::HalfvecL2,
         "halfvec_ip_ops" => Opfamily::HalfvecIp,
         "halfvec_cosine_ops" => Opfamily::HalfvecCosine,
-        "vector_maxsim_l2_ops" => Opfamily::VectorMaxsimL2,
         "vector_maxsim_ip_ops" => Opfamily::VectorMaxsimIp,
         "vector_maxsim_cosine_ops" => Opfamily::VectorMaxsimCosine,
-        "halfvec_maxsim_l2_ops" => Opfamily::HalfvecMaxsimL2,
         "halfvec_maxsim_ip_ops" => Opfamily::HalfvecMaxsimIp,
         "halfvec_maxsim_cosine_ops" => Opfamily::HalfvecMaxsimCosine,
         _ => pgrx::error!("unknown operator class"),

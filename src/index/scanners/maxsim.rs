@@ -2,7 +2,7 @@ use super::{SearchBuilder, SearchFetcher, SearchOptions};
 use crate::index::algorithm::RandomProject;
 use crate::index::am::pointer_to_ctid;
 use crate::index::opclass::Opfamily;
-use algorithm::operator::{Dot, L2, Op, Vector};
+use algorithm::operator::{Dot, Op, Vector};
 use algorithm::types::{DistanceKind, OwnedVector, VectorKind};
 use algorithm::{RelationRead, RerankMethod};
 use always_equal::AlwaysEqual;
@@ -23,7 +23,7 @@ impl SearchBuilder for MaxsimBuilder {
     fn new(opfamily: Opfamily) -> Self {
         assert!(matches!(
             opfamily,
-            Opfamily::VectorMaxsimCosine | Opfamily::VectorMaxsimIp | Opfamily::VectorMaxsimL2
+            Opfamily::VectorMaxsimCosine | Opfamily::VectorMaxsimIp
         ));
         Self {
             opfamily,
@@ -71,59 +71,9 @@ impl SearchBuilder for MaxsimBuilder {
         if !matches!(method, RerankMethod::Index) {
             pgrx::error!("maxsim search with rerank_in_table is not supported");
         }
-        let (c, estimations) = match (opfamily.vector_kind(), opfamily.distance_kind()) {
-            (VectorKind::Vecf32, DistanceKind::L2) => {
-                let vectors = vectors
-                    .into_iter()
-                    .map(|vector| {
-                        RandomProject::project(
-                            VectOwned::<f32>::from_owned(vector.clone()).as_borrowed(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let mut estimations = Vec::new();
-                let mut c = HashMap::<[u16; 3], States>::new();
-                for (query_id, vector) in vectors.iter().enumerate() {
-                    let (results, est) = algorithm::search_and_estimate::<Op<VectOwned<f32>, L2>>(
-                        relation.clone(),
-                        vector.clone(),
-                        options.probes.clone(),
-                        options.epsilon,
-                        maxsim_threshold,
-                    );
-                    if results.is_empty() {
-                        estimations.push(0.0);
-                        continue;
-                    }
-                    let returning = algorithm::rerank_index::<Op<VectOwned<f32>, L2>>(
-                        relation.clone(),
-                        vector.clone(),
-                        results,
-                    )
-                    .take(max_maxsim_tuples as usize)
-                    .collect::<Vec<_>>();
-                    let mut max = f32::NEG_INFINITY;
-                    for (distance, payload) in returning {
-                        max = max.max(distance.to_f32());
-                        use std::collections::hash_map::Entry::{Occupied, Vacant};
-                        let (ctid, _) = pointer_to_ctid(payload);
-                        let key = [ctid.ip_blkid.bi_hi, ctid.ip_blkid.bi_lo, ctid.ip_posid];
-                        match c.entry(key) {
-                            Vacant(e) => {
-                                let states = e.insert(States::new(vectors.len()));
-                                states.update(query_id, distance);
-                            }
-                            Occupied(mut e) => {
-                                let states = e.get_mut();
-                                states.update(query_id, distance);
-                            }
-                        }
-                    }
-                    estimations.push(max.max(est.to_f32()));
-                }
-                (c, estimations)
-            }
-            (VectorKind::Vecf32, DistanceKind::Dot) => {
+        assert!(matches!(opfamily.distance_kind(), DistanceKind::Dot));
+        let (c, estimations) = match opfamily.vector_kind() {
+            VectorKind::Vecf32 => {
                 let vectors = vectors
                     .into_iter()
                     .map(|vector| {
@@ -174,58 +124,7 @@ impl SearchBuilder for MaxsimBuilder {
                 }
                 (c, estimations)
             }
-            (VectorKind::Vecf16, DistanceKind::L2) => {
-                let vectors = vectors
-                    .into_iter()
-                    .map(|vector| {
-                        RandomProject::project(
-                            VectOwned::<f16>::from_owned(vector.clone()).as_borrowed(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let mut estimations = Vec::new();
-                let mut c = HashMap::<[u16; 3], States>::new();
-                for (query_id, vector) in vectors.iter().enumerate() {
-                    let (results, est) = algorithm::search_and_estimate::<Op<VectOwned<f16>, L2>>(
-                        relation.clone(),
-                        vector.clone(),
-                        options.probes.clone(),
-                        options.epsilon,
-                        maxsim_threshold,
-                    );
-                    if results.is_empty() {
-                        estimations.push(0.0);
-                        continue;
-                    }
-                    let returning = algorithm::rerank_index::<Op<VectOwned<f16>, L2>>(
-                        relation.clone(),
-                        vector.clone(),
-                        results,
-                    )
-                    .take(max_maxsim_tuples as usize)
-                    .collect::<Vec<_>>();
-                    let mut max = f32::NEG_INFINITY;
-                    for (distance, payload) in returning {
-                        max = max.max(distance.to_f32());
-                        use std::collections::hash_map::Entry::{Occupied, Vacant};
-                        let (ctid, _) = pointer_to_ctid(payload);
-                        let key = [ctid.ip_blkid.bi_hi, ctid.ip_blkid.bi_lo, ctid.ip_posid];
-                        match c.entry(key) {
-                            Vacant(e) => {
-                                let states = e.insert(States::new(vectors.len()));
-                                states.update(query_id, distance);
-                            }
-                            Occupied(mut e) => {
-                                let states = e.get_mut();
-                                states.update(query_id, distance);
-                            }
-                        }
-                    }
-                    estimations.push(max.max(est.to_f32()));
-                }
-                (c, estimations)
-            }
-            (VectorKind::Vecf16, DistanceKind::Dot) => {
+            VectorKind::Vecf16 => {
                 let vectors = vectors
                     .into_iter()
                     .map(|vector| {
