@@ -321,10 +321,7 @@ pub unsafe extern "C" fn amrescan(
                 }
                 LazyCell::new(Box::new(move || builder.build(relation, options, fetcher)))
             }
-            Opfamily::VectorMaxsimIp
-            | Opfamily::VectorMaxsimCosine
-            | Opfamily::HalfvecMaxsimIp
-            | Opfamily::HalfvecMaxsimCosine => {
+            Opfamily::VectorMaxsimIp | Opfamily::HalfvecMaxsimIp => {
                 let mut builder = MaxsimBuilder::new(opfamily);
                 for i in 0..(*scan).numberOfOrderBys {
                     let data = (*scan).orderByData.add(i as usize);
