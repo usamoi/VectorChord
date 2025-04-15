@@ -53,6 +53,7 @@ impl SearchBuilder for DefaultBuilder {
         relation: impl RelationRead + 'a,
         options: SearchOptions,
         mut fetcher: impl SearchFetcher + 'a,
+        bump: &'a bumpalo::Bump,
     ) -> Box<dyn Iterator<Item = (f32, [u16; 3], bool)> + 'a> {
         let mut vector = None;
         let mut threshold = None;
@@ -91,6 +92,7 @@ impl SearchBuilder for DefaultBuilder {
                         vector.clone(),
                         options.probes,
                         options.epsilon,
+                        &bump,
                     );
                     let fetch = move |payload| {
                         let (key, _) = pointer_to_kv(payload);
@@ -134,6 +136,7 @@ impl SearchBuilder for DefaultBuilder {
                         vector.clone(),
                         options.probes,
                         options.epsilon,
+                        &bump,
                     );
                     let fetch = move |payload| {
                         let (key, _) = pointer_to_kv(payload);
@@ -177,6 +180,7 @@ impl SearchBuilder for DefaultBuilder {
                         vector.clone(),
                         options.probes,
                         options.epsilon,
+                        &bump,
                     );
                     let fetch = move |payload| {
                         let (key, _) = pointer_to_kv(payload);
@@ -220,6 +224,7 @@ impl SearchBuilder for DefaultBuilder {
                         vector.clone(),
                         options.probes,
                         options.epsilon,
+                        &bump,
                     );
                     let fetch = move |payload| {
                         let (key, _) = pointer_to_kv(payload);

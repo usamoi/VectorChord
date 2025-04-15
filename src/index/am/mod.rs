@@ -4,6 +4,7 @@ use crate::index::gucs;
 use crate::index::opclass::{Opfamily, opfamily};
 use crate::index::scanners::*;
 use crate::index::storage::PostgresRelation;
+use bumpalo::Bump;
 use pgrx::datum::Internal;
 use pgrx::pg_sys::{BlockIdData, Datum, ItemPointerData};
 use std::cell::LazyCell;
@@ -352,6 +353,7 @@ pub unsafe extern "C-unwind" fn ambeginscan(
     let scanner: Scanner = Scanner {
         hack: None,
         scanning: LazyCell::new(Box::new(|| Box::new(std::iter::empty()))),
+        bump: Box::new(Bump::new()),
     };
     unsafe {
         (*scan).opaque = CurrentMemoryContext.leak_and_drop_on_delete(scanner).cast();
@@ -405,6 +407,8 @@ pub unsafe extern "C-unwind" fn amrescan(
                 )
             })
         };
+        // PAY ATTENTATION: `scanning` references `bump`, so `scanning` must be dropped before `bump`.
+        let bump = scanner.bump.as_ref();
         scanner.scanning = match opfamily {
             Opfamily::VectorL2
             | Opfamily::VectorIp
@@ -425,7 +429,9 @@ pub unsafe extern "C-unwind" fn amrescan(
                     let is_null = ((*data).sk_flags & pgrx::pg_sys::SK_ISNULL as i32) != 0;
                     builder.add((*data).sk_strategy, (!is_null).then_some(value));
                 }
-                LazyCell::new(Box::new(move || builder.build(index, options, fetcher)))
+                LazyCell::new(Box::new(move || {
+                    builder.build(index, options, fetcher, bump)
+                }))
             }
             Opfamily::VectorMaxsim | Opfamily::HalfvecMaxsim => {
                 let mut builder = MaxsimBuilder::new(opfamily);
@@ -441,7 +447,9 @@ pub unsafe extern "C-unwind" fn amrescan(
                     let is_null = ((*data).sk_flags & pgrx::pg_sys::SK_ISNULL as i32) != 0;
                     builder.add((*data).sk_strategy, (!is_null).then_some(value));
                 }
-                LazyCell::new(Box::new(move || builder.build(index, options, fetcher)))
+                LazyCell::new(Box::new(move || {
+                    builder.build(index, options, fetcher, bump)
+                }))
             }
         };
     }
@@ -480,6 +488,7 @@ pub unsafe extern "C-unwind" fn amgettuple(
 pub unsafe extern "C-unwind" fn amendscan(scan: pgrx::pg_sys::IndexScanDesc) {
     let scanner = unsafe { &mut *(*scan).opaque.cast::<Scanner>() };
     scanner.scanning = LazyCell::new(Box::new(|| Box::new(std::iter::empty())));
+    scanner.bump = Box::new(Bump::new());
 }
 
 type Iter = Box<dyn Iterator<Item = (f32, [u16; 3], bool)>>;
@@ -487,6 +496,7 @@ type Iter = Box<dyn Iterator<Item = (f32, [u16; 3], bool)>>;
 pub struct Scanner {
     pub hack: Option<NonNull<pgrx::pg_sys::IndexScanState>>,
     scanning: LazyCell<Iter, Box<dyn FnOnce() -> Iter>>,
+    bump: Box<Bump>,
 }
 
 struct HeapFetcher {

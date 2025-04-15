@@ -45,6 +45,7 @@ impl SearchBuilder for MaxsimBuilder {
         relation: impl RelationRead + 'a,
         options: SearchOptions,
         _: impl SearchFetcher + 'a,
+        bump: &'a bumpalo::Bump,
     ) -> Box<dyn Iterator<Item = (f32, [u16; 3], bool)> + 'a> {
         let mut vectors = None;
         for orderby_vectors in self.orderbys.into_iter().flatten() {
@@ -70,7 +71,7 @@ impl SearchBuilder for MaxsimBuilder {
         assert!(matches!(opfamily.distance_kind(), DistanceKind::Dot));
         let n = vectors.len();
         let accu_map = |(Reverse(dis), AlwaysEqual(pay))| (dis, pay);
-        let rough_map = |(_, AlwaysEqual(dis), AlwaysEqual(pay), _)| (dis, pay);
+        let rough_map = |(_, AlwaysEqual(dis), AlwaysEqual(pay), _, _)| (dis, pay);
         let iter: Box<dyn Iterator<Item = _>> = match opfamily.vector_kind() {
             VectorKind::Vecf32 => {
                 type Op = algorithm::operator::Op<VectOwned<f32>, Dot>;
@@ -94,6 +95,7 @@ impl SearchBuilder for MaxsimBuilder {
                         options.probes.clone(),
                         options.epsilon,
                         maxsim_threshold,
+                        bump,
                     );
                     let (mut accu_set, mut rough_set) = (Vec::new(), Vec::new());
                     if maxsim_refine != 0 && !results.is_empty() {
@@ -135,6 +137,7 @@ impl SearchBuilder for MaxsimBuilder {
                         options.probes.clone(),
                         options.epsilon,
                         maxsim_threshold,
+                        bump,
                     );
                     let (mut accu_set, mut rough_set) = (Vec::new(), Vec::new());
                     if maxsim_refine != 0 && !results.is_empty() {

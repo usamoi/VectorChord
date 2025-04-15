@@ -59,7 +59,7 @@ pub fn append<O: Operator>(
     vectors_first: u32,
     vector: <O::Vector as VectorOwned>::Borrowed<'_>,
     payload: NonZero<u64>,
-) -> IndexPointer {
+) -> (IndexPointer, Vec<u32>) {
     fn append(index: impl RelationWrite, first: u32, bytes: &[u8]) -> IndexPointer {
         if let Some(mut write) = index.search(bytes.len()) {
             let i = write
@@ -71,6 +71,7 @@ pub fn append<O: Operator>(
     }
     let (slices, metadata) = O::Vector::split(vector);
     let mut chain = Ok(metadata);
+    let mut trace = Vec::new();
     for i in (0..slices.len()).rev() {
         let bytes = VectorTuple::<O::Vector>::serialize(&match chain {
             Ok(metadata) => VectorTuple::_0 {
@@ -84,7 +85,12 @@ pub fn append<O: Operator>(
                 pointer,
             },
         });
-        chain = Err(append(index.clone(), vectors_first, &bytes));
+        let pointer = append(index.clone(), vectors_first, &bytes);
+        chain = Err(pointer);
+        trace.push(pointer_to_pair(pointer).0);
     }
-    chain.expect_err("internal error: 0-dimensional vector")
+    (
+        chain.expect_err("internal error: 0-dimensional vector"),
+        trace,
+    )
 }

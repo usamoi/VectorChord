@@ -21,15 +21,16 @@ pub fn build<O: Operator>(
     assert_eq!(meta.first(), 0);
     let freepage = TapeWriter::<_, FreepageTuple>::create(&index, false);
     let mut vectors = TapeWriter::<_, VectorTuple<O::Vector>>::create(&index, true);
-    let mut pointer_of_means = Vec::<Vec<IndexPointer>>::new();
+    let mut pointer_of_means = Vec::<Vec<(IndexPointer, Vec<u32>)>>::new();
     for i in 0..structures.len() {
         let mut level = Vec::new();
         for j in 0..structures[i].len() {
             let vector = structures[i].means[j].as_borrowed();
             let (slices, metadata) = O::Vector::split(vector);
             let mut chain = Ok(metadata);
+            let mut trace = Vec::new();
             for i in (0..slices.len()).rev() {
-                chain = Err(vectors.push(match chain {
+                let pointer = vectors.push(match chain {
                     Ok(metadata) => VectorTuple::_0 {
                         payload: None,
                         elements: slices[i].to_vec(),
@@ -40,9 +41,14 @@ pub fn build<O: Operator>(
                         elements: slices[i].to_vec(),
                         pointer,
                     },
-                }));
+                });
+                chain = Err(pointer);
+                trace.push(pointer_to_pair(pointer).0);
             }
-            level.push(chain.expect_err("internal error: 0-dimensional vector"));
+            level.push((
+                chain.expect_err("internal error: 0-dimensional vector"),
+                trace,
+            ));
         }
         pointer_of_means.push(level);
     }
@@ -61,7 +67,7 @@ pub fn build<O: Operator>(
                 });
                 level.push(jump.first());
             } else {
-                let mut tape = H1TapeWriter::create(&index, false);
+                let mut tape = H1TapeWriter::create(&index, O::Vector::count(dims as _), false);
                 let h2_mean = structures[i].means[j].as_borrowed();
                 let h2_children = structures[i].children[j].as_slice();
                 for child in h2_children.iter().copied() {
@@ -77,30 +83,34 @@ pub fn build<O: Operator>(
                         O::Vector::code(h1_mean)
                     };
                     tape.push(Branch {
-                        mean: pointer_of_means[i - 1][child as usize],
+                        mean: pointer_of_means[i - 1][child as usize].0,
                         dis_u_2: code.dis_u_2,
                         factor_ppc: code.factor_ppc,
                         factor_ip: code.factor_ip,
                         factor_err: code.factor_err,
                         signs: code.signs,
+                        prefetch: pointer_of_means[i - 1][child as usize].1.clone(),
                         extra: pointer_of_firsts[i - 1][child as usize],
                     });
                 }
-                let (mut tape, branches) = tape.into_inner();
-                if !branches.is_empty() {
+                let (mut tape, chunk) = tape.into_inner();
+                if !chunk.is_empty() {
                     let mut remain =
-                        padding_pack(branches.iter().map(|x| rabitq::pack_to_u4(&x.signs)));
+                        padding_pack(chunk.iter().map(|x| rabitq::pack_to_u4(&x.signs)));
                     loop {
                         let freespace = tape.freespace();
-                        if H1Tuple::estimate_size_0(remain.len()) <= freespace as usize {
+                        if H1Tuple::estimate_size_0(O::Vector::count(dims as _), remain.len())
+                            <= freespace as usize
+                        {
                             tape.tape_put(H1Tuple::_0 {
-                                mean: any_pack(branches.iter().map(|x| x.mean)),
-                                dis_u_2: any_pack(branches.iter().map(|x| x.dis_u_2)),
-                                factor_ppc: any_pack(branches.iter().map(|x| x.factor_ppc)),
-                                factor_ip: any_pack(branches.iter().map(|x| x.factor_ip)),
-                                factor_err: any_pack(branches.iter().map(|x| x.factor_err)),
-                                first: any_pack(branches.iter().map(|x| x.extra)),
-                                len: branches.len() as _,
+                                mean: any_pack(chunk.iter().map(|x| x.mean)),
+                                dis_u_2: any_pack(chunk.iter().map(|x| x.dis_u_2)),
+                                factor_ppc: any_pack(chunk.iter().map(|x| x.factor_ppc)),
+                                factor_ip: any_pack(chunk.iter().map(|x| x.factor_ip)),
+                                factor_err: any_pack(chunk.iter().map(|x| x.factor_err)),
+                                first: any_pack(chunk.iter().map(|x| x.extra)),
+                                prefetch: fix(chunk.iter().map(|x| x.prefetch.as_slice())),
+                                len: chunk.len() as _,
                                 elements: remain,
                             });
                             break;
@@ -129,7 +139,8 @@ pub fn build<O: Operator>(
         vectors_first: vectors.first(),
         root_mean: pointer_of_means
             .last()
-            .expect("internal error: empty structure")[0],
+            .expect("internal error: empty structure")[0]
+            .0,
         root_first: pointer_of_firsts
             .last()
             .expect("internal error: empty structure")[0],
@@ -144,16 +155,18 @@ where
 {
     tape: TapeWriter<'a, R, H1Tuple>,
     branches: Vec<Branch<u32>>,
+    prefetch: usize,
 }
 
 impl<'a, R> H1TapeWriter<'a, R>
 where
     R: RelationWrite + 'a,
 {
-    fn create(index: &'a R, tracking_freespace: bool) -> Self {
+    fn create(index: &'a R, prefetch: usize, tracking_freespace: bool) -> Self {
         Self {
             tape: TapeWriter::create(index, tracking_freespace),
             branches: Vec::new(),
+            prefetch,
         }
     }
     fn push(&mut self, branch: Branch<u32>) {
@@ -162,7 +175,7 @@ where
             let mut remain = padding_pack(chunk.iter().map(|x| rabitq::pack_to_u4(&x.signs)));
             loop {
                 let freespace = self.tape.freespace();
-                if H1Tuple::estimate_size_0(remain.len()) <= freespace as usize {
+                if H1Tuple::estimate_size_0(self.prefetch, remain.len()) <= freespace as usize {
                     self.tape.tape_put(H1Tuple::_0 {
                         mean: chunk.each_ref().map(|x| x.mean),
                         dis_u_2: chunk.each_ref().map(|x| x.dis_u_2),
@@ -170,6 +183,7 @@ where
                         factor_ip: chunk.each_ref().map(|x| x.factor_ip),
                         factor_err: chunk.each_ref().map(|x| x.factor_err),
                         first: chunk.each_ref().map(|x| x.extra),
+                        prefetch: fix(chunk.each_ref().map(|x| x.prefetch.as_slice())),
                         len: chunk.len() as _,
                         elements: remain,
                     });
@@ -191,4 +205,21 @@ where
     fn into_inner(self) -> (TapeWriter<'a, R, H1Tuple>, Vec<Branch<u32>>) {
         (self.tape, self.branches)
     }
+}
+
+fn fix<'a>(group: impl IntoIterator<Item = &'a [u32]>) -> Vec<[u32; 32]> {
+    let mut group = group.into_iter().collect::<Vec<_>>();
+    if group.len() > 32 {
+        panic!("too many slices");
+    }
+    group.resize(32, &[]);
+    let count = group.iter().map(|x| x.len()).max().unwrap_or_default();
+    (0..count)
+        .map(|i| {
+            std::array::from_fn(|j| {
+                let k = i * 32 + j;
+                group[k / count].get(k % count).copied().unwrap_or_default()
+            })
+        })
+        .collect()
 }

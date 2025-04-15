@@ -124,7 +124,7 @@ pub fn read_frozen_tape<A, T>(
     index: impl RelationRead,
     first: u32,
     accessor: impl Fn() -> A,
-    mut callback: impl FnMut(T, IndexPointer, NonZero<u64>),
+    mut callback: impl for<'a> FnMut(T, IndexPointer, NonZero<u64>, &'a [u32]),
     mut step: impl FnMut(u32),
 ) where
     A: for<'a> Accessor1<
@@ -147,9 +147,15 @@ pub fn read_frozen_tape<A, T>(
                     let mut x = x.take().unwrap_or_else(&accessor);
                     x.push(tuple.elements());
                     let values = x.finish(tuple.metadata());
+                    let prefetch: [_; 32] = reshape(tuple.prefetch());
                     for (j, value) in values.into_iter().enumerate() {
                         if let Some(payload) = tuple.payload()[j] {
-                            callback(value, tuple.mean()[j], payload);
+                            callback(
+                                value,
+                                tuple.mean()[j],
+                                payload,
+                                slice_take_while(prefetch[j]),
+                            );
                         }
                     }
                 }
@@ -166,7 +172,7 @@ pub fn read_appendable_tape<T>(
     index: impl RelationRead,
     first: u32,
     mut access: impl for<'a> FnMut(BinaryCode<'a>) -> T,
-    mut callback: impl FnMut(T, IndexPointer, NonZero<u64>),
+    mut callback: impl for<'a> FnMut(T, IndexPointer, NonZero<u64>, &'a [u32]),
     mut step: impl FnMut(u32),
 ) {
     assert!(first != u32::MAX);
@@ -179,7 +185,7 @@ pub fn read_appendable_tape<T>(
             let tuple = AppendableTuple::deserialize_ref(bytes);
             if let Some(payload) = tuple.payload() {
                 let value = access(tuple.code());
-                callback(value, tuple.mean(), payload);
+                callback(value, tuple.mean(), payload, tuple.prefetch());
             }
         }
         current = guard.get_opaque().next;
@@ -230,4 +236,18 @@ pub fn append(
             }
         }
     }
+}
+
+fn reshape<T>(slice_of_arrays: &[[T; 32]]) -> [&[T]; 32] {
+    let count = slice_of_arrays.len();
+    let slice = slice_of_arrays.as_flattened();
+    std::array::from_fn(|i| &slice[count * i..][..count])
+}
+
+fn slice_take_while(slice: &[u32]) -> &[u32] {
+    let mut i = 0;
+    while i < slice.len() && slice[i] != 0 {
+        i += 1;
+    }
+    &slice[..i]
 }

@@ -31,10 +31,10 @@ pub fn insert<O: Operator>(index: impl RelationWrite, payload: NonZero<u64>, vec
         None
     };
 
-    let mean = if !rerank_in_heap {
+    let (mean, prefetch) = if !rerank_in_heap {
         vectors::append::<O>(index.clone(), vectors_first, vector.as_borrowed(), payload)
     } else {
-        IndexPointer::default()
+        (IndexPointer::default(), Vec::new())
     };
 
     type State<O> = (u32, Option<<O as Operator>::Vector>);
@@ -136,6 +136,7 @@ pub fn insert<O: Operator>(index: impl RelationWrite, payload: NonZero<u64>, vec
         factor_ip: code.factor_ip,
         factor_err: code.factor_err,
         payload: Some(payload),
+        prefetch,
         elements: rabitq::pack_to_u64(&code.signs),
     });
 

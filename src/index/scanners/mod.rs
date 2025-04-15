@@ -28,6 +28,7 @@ pub trait SearchBuilder: 'static {
         relation: impl RelationRead + 'a,
         options: SearchOptions,
         fetcher: impl SearchFetcher + 'a,
+        bump: &'a bumpalo::Bump,
     ) -> Box<dyn Iterator<Item = (f32, [u16; 3], bool)> + 'a>;
 }
 

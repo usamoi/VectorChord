@@ -1,3 +1,7 @@
+#![feature(closure_lifetime_binder)]
+#![feature(let_chains)]
+#![feature(vec_deque_pop_if)]
+
 mod build;
 mod bulkdelete;
 mod cache;
@@ -13,6 +17,7 @@ mod select_heap;
 mod tape;
 mod tuples;
 mod vectors;
+mod window_heap;
 
 pub mod operator;
 pub mod types;
@@ -69,6 +74,7 @@ pub trait RelationRead: Clone {
     type ReadGuard<'a>: PageGuard + Deref<Target = Self::Page>
     where
         Self: 'a;
+    fn prefetch(&self, id: u32);
     fn read(&self, id: u32) -> Self::ReadGuard<'_>;
 }
 
@@ -94,6 +100,7 @@ pub(crate) struct Branch<T> {
     pub factor_ip: f32,
     pub factor_err: f32,
     pub signs: Vec<bool>,
+    pub prefetch: Vec<u32>,
     pub extra: T,
 }
 

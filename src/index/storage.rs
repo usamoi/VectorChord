@@ -247,6 +247,14 @@ impl RelationRead for PostgresRelation {
 
     type ReadGuard<'a> = PostgresBufferReadGuard;
 
+    fn prefetch(&self, id: u32) {
+        assert!(id != u32::MAX, "no such page");
+        unsafe {
+            use pgrx::pg_sys::PrefetchBuffer;
+            PrefetchBuffer(self.raw, 0, id);
+        }
+    }
+
     fn read(&self, id: u32) -> Self::ReadGuard<'_> {
         assert!(id != u32::MAX, "no such page");
         unsafe {

@@ -1,7 +1,7 @@
-use crate::operator::{FunctionalAccessor, Operator};
+use crate::operator::{FunctionalAccessor, Operator, Vector};
 use crate::tape::{self, TapeWriter};
 use crate::tuples::*;
-use crate::{Branch, Page, RelationRead, RelationWrite, freepages};
+use crate::{Branch, IndexPointer, Page, RelationRead, RelationWrite, freepages};
 use simd::fast_scan::{padding_pack, unpack};
 use std::num::NonZero;
 
@@ -50,12 +50,16 @@ pub fn maintain<O: Operator>(index: impl RelationWrite, check: impl Fn()) {
 
         let hooked_index = RelationHooked(index.clone(), hooked_extend(freepage_first));
 
-        let mut tape = FrozenTapeWriter::create(&hooked_index, false);
+        let mut tape = FrozenTapeWriter::create(&hooked_index, O::Vector::count(dims as _), false);
 
         let mut trace = Vec::new();
 
         let mut tuples = 0_u64;
-        let mut callback = |code: (_, _, _, _, _), mean, payload| {
+        let mut callback = for<'a> |code: (f32, f32, f32, f32, Vec<bool>),
+                                    mean: IndexPointer,
+                                    payload: NonZero<u64>,
+                                    prefetch: &'a [u32]|
+                 -> () {
             tape.push(Branch {
                 mean,
                 dis_u_2: code.0,
@@ -63,6 +67,7 @@ pub fn maintain<O: Operator>(index: impl RelationWrite, check: impl Fn()) {
                 factor_ip: code.2,
                 factor_err: code.3,
                 signs: code.4,
+                prefetch: prefetch.to_vec(),
                 extra: payload,
             });
             tuples += 1;
@@ -119,6 +124,7 @@ pub fn maintain<O: Operator>(index: impl RelationWrite, check: impl Fn()) {
                 factor_ip: branch.factor_ip,
                 factor_err: branch.factor_err,
                 payload: Some(branch.extra),
+                prefetch: branch.prefetch,
                 elements: rabitq::pack_to_u64(&branch.signs),
             });
         }
@@ -139,16 +145,18 @@ where
 {
     tape: TapeWriter<'a, R, FrozenTuple>,
     branches: Vec<Branch<NonZero<u64>>>,
+    prefetch: usize,
 }
 
 impl<'a, R> FrozenTapeWriter<'a, R>
 where
     R: RelationWrite + 'a,
 {
-    fn create(index: &'a R, tracking_freespace: bool) -> Self {
+    fn create(index: &'a R, prefetch: usize, tracking_freespace: bool) -> Self {
         Self {
             tape: TapeWriter::create(index, tracking_freespace),
             branches: Vec::new(),
+            prefetch,
         }
     }
     fn push(&mut self, branch: Branch<NonZero<u64>>) {
@@ -157,7 +165,7 @@ where
             let mut remain = padding_pack(chunk.iter().map(|x| rabitq::pack_to_u4(&x.signs)));
             loop {
                 let freespace = self.tape.freespace();
-                if FrozenTuple::estimate_size_0(remain.len()) <= freespace as usize {
+                if FrozenTuple::estimate_size_0(self.prefetch, remain.len()) <= freespace as usize {
                     self.tape.tape_put(FrozenTuple::_0 {
                         mean: chunk.each_ref().map(|x| x.mean),
                         dis_u_2: chunk.each_ref().map(|x| x.dis_u_2),
@@ -165,6 +173,7 @@ where
                         factor_ip: chunk.each_ref().map(|x| x.factor_ip),
                         factor_err: chunk.each_ref().map(|x| x.factor_err),
                         payload: chunk.each_ref().map(|x| Some(x.extra)),
+                        prefetch: fix(chunk.each_ref().map(|x| x.prefetch.as_slice())),
                         elements: remain,
                     });
                     break;
@@ -201,6 +210,10 @@ where
         = R::ReadGuard<'a>
     where
         Self: 'a;
+
+    fn prefetch(&self, id: u32) {
+        self.0.prefetch(id);
+    }
 
     fn read(&self, id: u32) -> Self::ReadGuard<'_> {
         self.0.read(id)
@@ -249,4 +262,21 @@ where
             index.extend(true)
         }
     }
+}
+
+fn fix<'a>(group: impl IntoIterator<Item = &'a [u32]>) -> Vec<[u32; 32]> {
+    let mut group = group.into_iter().collect::<Vec<_>>();
+    if group.len() > 32 {
+        panic!("too many slices");
+    }
+    group.resize(32, &[]);
+    let count = group.iter().map(|x| x.len()).max().unwrap_or_default();
+    (0..count)
+        .map(|i| {
+            std::array::from_fn(|j| {
+                let k = i * 32 + j;
+                group[k / count].get(k % count).copied().unwrap_or_default()
+            })
+        })
+        .collect()
 }

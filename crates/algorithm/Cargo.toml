@@ -12,6 +12,7 @@ random_orthogonal_matrix = { path = "../random_orthogonal_matrix" }
 simd = { path = "../simd" }
 vector = { path = "../vector" }
 
+bumpalo.workspace = true
 half.workspace = true
 paste.workspace = true
 rand.workspace = true

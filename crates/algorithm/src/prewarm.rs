@@ -1,8 +1,9 @@
 use crate::operator::{FunctionalAccessor, Operator};
 use crate::tuples::*;
-use crate::{Page, RelationRead, tape, vectors};
+use crate::{IndexPointer, Page, RelationRead, tape, vectors};
 use std::error::Error;
 use std::fmt::Write;
+use std::num::NonZero;
 
 pub fn prewarm<O: Operator>(
     index: impl RelationRead,
@@ -84,7 +85,11 @@ pub fn prewarm<O: Operator>(
                     }
                     FunctionalAccessor::new((), push, finish)
                 },
-                |(), _, _| {
+                for<'a> |(): (),
+                         _mean: IndexPointer,
+                         _payload: NonZero<u64>,
+                         _prefetch: &'a [u32]|
+                         -> () {
                     results.push(());
                 },
                 |_| {
@@ -96,7 +101,11 @@ pub fn prewarm<O: Operator>(
                 index.clone(),
                 jump_tuple.appendable_first(),
                 |_| (),
-                |(), _, _| {
+                for<'a> |(): (),
+                         _mean: IndexPointer,
+                         _payload: NonZero<u64>,
+                         _prefetch: &'a [u32]|
+                         -> () {
                     results.push(());
                 },
                 |_| {

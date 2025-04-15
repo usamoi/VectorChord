@@ -1282,6 +1282,12 @@ impl<R: RelationRead<Page = PostgresPage>> RelationRead for CachingRelation<'_, 
     where
         Self: 'a;
 
+    fn prefetch(&self, id: u32) {
+        if self.cache.get(id).is_none() {
+            self.relation.prefetch(id);
+        }
+    }
+
     fn read(&self, id: u32) -> Self::ReadGuard<'_> {
         if let Some(x) = self.cache.get(id) {
             CachingRelationReadGuard::Cached(id, x)

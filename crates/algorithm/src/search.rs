@@ -9,19 +9,21 @@ use std::collections::BinaryHeap;
 use std::num::NonZero;
 use vector::{VectorBorrowed, VectorOwned};
 
-type Result<T> = (
+type Result<'b, T> = (
     Reverse<Distance>,
     AlwaysEqual<T>,
     AlwaysEqual<NonZero<u64>>,
     AlwaysEqual<IndexPointer>,
+    AlwaysEqual<&'b mut [u32]>,
 );
 
-pub fn default_search<O: Operator>(
+pub fn default_search<'b, O: Operator>(
     index: impl RelationRead,
     vector: O::Vector,
     probes: Vec<u32>,
     epsilon: f32,
-) -> Vec<Result<()>> {
+    bump: &'b bumpalo::Bump,
+) -> Vec<Result<'b, ()>> {
     let meta_guard = index.read(0);
     let meta_bytes = meta_guard.get(1).expect("data corruption");
     let meta_tuple = MetaTuple::deserialize_ref(meta_bytes);
@@ -141,13 +143,18 @@ pub fn default_search<O: Operator>(
         let jump_guard = index.read(first);
         let jump_bytes = jump_guard.get(1).expect("data corruption");
         let jump_tuple = JumpTuple::deserialize_ref(jump_bytes);
-        let mut callback = |(rough, err), mean, payload| {
+        let mut callback = for<'a> |(rough, err): (f32, f32),
+                                    mean: IndexPointer,
+                                    payload: NonZero<u64>,
+                                    prefetch: &'a [u32]|
+                 -> () {
             let lowerbound = Distance::from_f32(rough - err * epsilon);
             results.push((
                 Reverse(lowerbound),
                 AlwaysEqual(()),
                 AlwaysEqual(payload),
                 AlwaysEqual(mean),
+                AlwaysEqual(bump.alloc_slice_copy(prefetch)),
             ));
         };
         tape::read_frozen_tape(
@@ -168,13 +175,14 @@ pub fn default_search<O: Operator>(
     results.into_vec()
 }
 
-pub fn maxsim_search<O: Operator>(
+pub fn maxsim_search<'b, O: Operator>(
     index: impl RelationRead,
     vector: O::Vector,
     probes: Vec<u32>,
     epsilon: f32,
     mut threshold: u32,
-) -> (Vec<Result<Distance>>, Distance) {
+    bump: &'b bumpalo::Bump,
+) -> (Vec<Result<'b, Distance>>, Distance) {
     let meta_guard = index.read(0);
     let meta_bytes = meta_guard.get(1).expect("data corruption");
     let meta_tuple = MetaTuple::deserialize_ref(meta_bytes);
@@ -296,7 +304,11 @@ pub fn maxsim_search<O: Operator>(
         let jump_guard = index.read(first);
         let jump_bytes = jump_guard.get(1).expect("data corruption");
         let jump_tuple = JumpTuple::deserialize_ref(jump_bytes);
-        let mut callback = |(rough, err), mean, payload| {
+        let mut callback = for<'a> |(rough, err): (f32, f32),
+                                    mean: IndexPointer,
+                                    payload: NonZero<u64>,
+                                    prefetch: &'a [u32]|
+                 -> () {
             let lowerbound = Distance::from_f32(rough - err * epsilon);
             let rough = Distance::from_f32(rough);
             results.push((
@@ -304,6 +316,7 @@ pub fn maxsim_search<O: Operator>(
                 AlwaysEqual(rough),
                 AlwaysEqual(payload),
                 AlwaysEqual(mean),
+                AlwaysEqual(bump.alloc_slice_copy(prefetch)),
             ));
         };
         tape::read_frozen_tape(
