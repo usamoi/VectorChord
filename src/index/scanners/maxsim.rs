@@ -4,7 +4,7 @@ use crate::index::am::pointer_to_kv;
 use crate::index::opclass::Opfamily;
 use algorithm::operator::Dot;
 use algorithm::types::{DistanceKind, OwnedVector, VectorKind};
-use algorithm::{RelationRead, RerankMethod};
+use algorithm::*;
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use half::f16;
@@ -42,9 +42,10 @@ impl SearchBuilder for MaxsimBuilder {
 
     fn build<'a>(
         self,
-        relation: impl RelationRead + 'a,
+        relation: &'a (impl RelationPrefetch + RelationReadStream),
         options: SearchOptions,
         _: impl SearchFetcher + 'a,
+        bump: &'a bumpalo::Bump,
     ) -> Box<dyn Iterator<Item = (f32, [u16; 3], bool)> + 'a> {
         let mut vectors = None;
         for orderby_vectors in self.orderbys.into_iter().flatten() {
@@ -63,17 +64,17 @@ impl SearchBuilder for MaxsimBuilder {
         let Some(vectors) = vectors else {
             return Box::new(std::iter::empty()) as Box<dyn Iterator<Item = (f32, [u16; 3], bool)>>;
         };
-        let method = algorithm::how(relation.clone());
+        let method = how(relation.clone());
         if !matches!(method, RerankMethod::Index) {
             pgrx::error!("maxsim search with rerank_in_table is not supported");
         }
         assert!(matches!(opfamily.distance_kind(), DistanceKind::Dot));
         let n = vectors.len();
         let accu_map = |(Reverse(dis), AlwaysEqual(pay))| (dis, pay);
-        let rough_map = |(_, AlwaysEqual(dis), AlwaysEqual(pay), _)| (dis, pay);
+        let rough_map = |((_, AlwaysEqual(dis), AlwaysEqual(pay), _), _)| (dis, pay);
         let iter: Box<dyn Iterator<Item = _>> = match opfamily.vector_kind() {
             VectorKind::Vecf32 => {
-                type Op = algorithm::operator::Op<VectOwned<f32>, Dot>;
+                type Op = operator::Op<VectOwned<f32>, Dot>;
                 let vectors = vectors
                     .into_iter()
                     .map(|vector| {
@@ -88,24 +89,26 @@ impl SearchBuilder for MaxsimBuilder {
                     })
                     .collect::<Vec<_>>();
                 Box::new(vectors.into_iter().map(|vector| {
-                    let (results, estimation_by_threshold) = algorithm::maxsim_search::<Op>(
+                    let (results, estimation_by_threshold) = maxsim_search::<_, Op, _>(
                         relation.clone(),
                         vector.clone(),
                         options.probes.clone(),
                         options.epsilon,
                         maxsim_threshold,
+                        bump,
+                        {
+                            let index = relation.clone();
+                            move |results| PlainPrefetcher::new(index.clone(), results)
+                        },
                     );
                     let (mut accu_set, mut rough_set) = (Vec::new(), Vec::new());
                     if maxsim_refine != 0 && !results.is_empty() {
-                        let mut reranker = algorithm::rerank_index::<Op, _>(
-                            relation.clone(),
-                            vector.clone(),
-                            results,
-                        );
+                        let prefetcher = SimplePrefetcher::new(relation.clone(), results);
+                        let mut reranker = rerank_index::<Op, _, _>(vector.clone(), prefetcher);
                         accu_set.extend(reranker.by_ref().take(maxsim_refine as _));
                         let (rough_iter, accu_iter) = reranker.finish();
                         accu_set.extend(accu_iter.map(accu_map));
-                        rough_set.extend(rough_iter.map(rough_map));
+                        rough_set.extend(rough_iter.into_iter().map(rough_map));
                     } else {
                         let rough_iter = results.into_iter();
                         rough_set.extend(rough_iter.map(rough_map));
@@ -114,7 +117,7 @@ impl SearchBuilder for MaxsimBuilder {
                 }))
             }
             VectorKind::Vecf16 => {
-                type Op = algorithm::operator::Op<VectOwned<f16>, Dot>;
+                type Op = operator::Op<VectOwned<f16>, Dot>;
                 let vectors = vectors
                     .into_iter()
                     .map(|vector| {
@@ -129,24 +132,26 @@ impl SearchBuilder for MaxsimBuilder {
                     })
                     .collect::<Vec<_>>();
                 Box::new(vectors.into_iter().map(|vector| {
-                    let (results, estimation_by_threshold) = algorithm::maxsim_search::<Op>(
+                    let (results, estimation_by_threshold) = maxsim_search::<_, Op, _>(
                         relation.clone(),
                         vector.clone(),
                         options.probes.clone(),
                         options.epsilon,
                         maxsim_threshold,
+                        bump,
+                        {
+                            let index = relation.clone();
+                            move |results| PlainPrefetcher::new(index.clone(), results)
+                        },
                     );
                     let (mut accu_set, mut rough_set) = (Vec::new(), Vec::new());
                     if maxsim_refine != 0 && !results.is_empty() {
-                        let mut reranker = algorithm::rerank_index::<Op, _>(
-                            relation.clone(),
-                            vector.clone(),
-                            results,
-                        );
+                        let prefetcher = SimplePrefetcher::new(relation.clone(), results);
+                        let mut reranker = rerank_index::<Op, _, _>(vector.clone(), prefetcher);
                         accu_set.extend(reranker.by_ref().take(maxsim_refine as _));
                         let (rough_iter, accu_iter) = reranker.finish();
                         accu_set.extend(accu_iter.map(accu_map));
-                        rough_set.extend(rough_iter.map(rough_map));
+                        rough_set.extend(rough_iter.into_iter().map(rough_map));
                     } else {
                         let rough_iter = results.into_iter();
                         rough_set.extend(rough_iter.map(rough_map));

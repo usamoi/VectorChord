@@ -4,7 +4,7 @@ use crate::index::am::pointer_to_kv;
 use crate::index::opclass::{Opfamily, Sphere};
 use algorithm::operator::{Dot, L2, Op};
 use algorithm::types::{DistanceKind, OwnedVector, VectorKind};
-use algorithm::{RelationRead, RerankMethod};
+use algorithm::*;
 use half::f16;
 use std::num::NonZero;
 use vector::VectorOwned;
@@ -50,9 +50,10 @@ impl SearchBuilder for DefaultBuilder {
 
     fn build<'a>(
         self,
-        relation: impl RelationRead + 'a,
+        relation: &'a (impl RelationPrefetch + RelationReadStream),
         options: SearchOptions,
         mut fetcher: impl SearchFetcher + 'a,
+        bump: &'a bumpalo::Bump,
     ) -> Box<dyn Iterator<Item = (f32, [u16; 3], bool)> + 'a> {
         let mut vector = None;
         let mut threshold = None;
@@ -86,11 +87,16 @@ impl SearchBuilder for DefaultBuilder {
                         }
                         .as_borrowed(),
                     );
-                    let results = algorithm::default_search::<Op<VectOwned<f32>, L2>>(
+                    let results = default_search::<_, Op<VectOwned<f32>, L2>, _>(
                         relation.clone(),
                         vector.clone(),
                         options.probes,
                         options.epsilon,
+                        bump,
+                        {
+                            let index = relation.clone();
+                            move |results| PlainPrefetcher::new(index.clone(), results)
+                        },
                     );
                     let fetch = move |payload| {
                         let (key, _) = pointer_to_kv(payload);
@@ -104,19 +110,19 @@ impl SearchBuilder for DefaultBuilder {
                         };
                         Some(RandomProject::project(raw.as_borrowed()))
                     };
-                    let method = algorithm::how(relation.clone());
+                    let method = how(relation.clone());
+                    let prefetcher = StreamPrefetcher::new(relation, results);
                     match method {
                         RerankMethod::Index => Box::new(
-                            algorithm::rerank_index::<Op<VectOwned<f32>, L2>, _>(
-                                relation, vector, results,
-                            )
-                            .map(move |(distance, payload)| (opfamily.output(distance), payload)),
+                            rerank_index::<Op<VectOwned<f32>, L2>, _, _>(vector, prefetcher).map(
+                                move |(distance, payload)| (opfamily.output(distance), payload),
+                            ),
                         ),
                         RerankMethod::Heap => Box::new(
-                            algorithm::rerank_heap::<Op<VectOwned<f32>, L2>, _>(
-                                vector, results, fetch,
-                            )
-                            .map(move |(distance, payload)| (opfamily.output(distance), payload)),
+                            rerank_heap::<Op<VectOwned<f32>, L2>, _, _>(vector, prefetcher, fetch)
+                                .map(move |(distance, payload)| {
+                                    (opfamily.output(distance), payload)
+                                }),
                         ),
                     }
                 }
@@ -129,11 +135,16 @@ impl SearchBuilder for DefaultBuilder {
                         }
                         .as_borrowed(),
                     );
-                    let results = algorithm::default_search::<Op<VectOwned<f32>, Dot>>(
+                    let results = default_search::<_, Op<VectOwned<f32>, Dot>, _>(
                         relation.clone(),
                         vector.clone(),
                         options.probes,
                         options.epsilon,
+                        bump,
+                        {
+                            let index = relation.clone();
+                            move |results| PlainPrefetcher::new(index.clone(), results)
+                        },
                     );
                     let fetch = move |payload| {
                         let (key, _) = pointer_to_kv(payload);
@@ -147,19 +158,19 @@ impl SearchBuilder for DefaultBuilder {
                         };
                         Some(RandomProject::project(raw.as_borrowed()))
                     };
-                    let method = algorithm::how(relation.clone());
+                    let method = how(relation.clone());
+                    let prefetcher = StreamPrefetcher::new(relation, results);
                     match method {
                         RerankMethod::Index => Box::new(
-                            algorithm::rerank_index::<Op<VectOwned<f32>, Dot>, _>(
-                                relation, vector, results,
-                            )
-                            .map(move |(distance, payload)| (opfamily.output(distance), payload)),
+                            rerank_index::<Op<VectOwned<f32>, Dot>, _, _>(vector, prefetcher).map(
+                                move |(distance, payload)| (opfamily.output(distance), payload),
+                            ),
                         ),
                         RerankMethod::Heap => Box::new(
-                            algorithm::rerank_heap::<Op<VectOwned<f32>, Dot>, _>(
-                                vector, results, fetch,
-                            )
-                            .map(move |(distance, payload)| (opfamily.output(distance), payload)),
+                            rerank_heap::<Op<VectOwned<f32>, Dot>, _, _>(vector, prefetcher, fetch)
+                                .map(move |(distance, payload)| {
+                                    (opfamily.output(distance), payload)
+                                }),
                         ),
                     }
                 }
@@ -172,11 +183,16 @@ impl SearchBuilder for DefaultBuilder {
                         }
                         .as_borrowed(),
                     );
-                    let results = algorithm::default_search::<Op<VectOwned<f16>, L2>>(
+                    let results = default_search::<_, Op<VectOwned<f16>, L2>, _>(
                         relation.clone(),
                         vector.clone(),
                         options.probes,
                         options.epsilon,
+                        bump,
+                        {
+                            let index = relation.clone();
+                            move |results| PlainPrefetcher::new(index.clone(), results)
+                        },
                     );
                     let fetch = move |payload| {
                         let (key, _) = pointer_to_kv(payload);
@@ -190,19 +206,19 @@ impl SearchBuilder for DefaultBuilder {
                         };
                         Some(RandomProject::project(raw.as_borrowed()))
                     };
-                    let method = algorithm::how(relation.clone());
+                    let method = how(relation.clone());
+                    let prefetcher = StreamPrefetcher::new(relation, results);
                     match method {
                         RerankMethod::Index => Box::new(
-                            algorithm::rerank_index::<Op<VectOwned<f16>, L2>, _>(
-                                relation, vector, results,
-                            )
-                            .map(move |(distance, payload)| (opfamily.output(distance), payload)),
+                            rerank_index::<Op<VectOwned<f16>, L2>, _, _>(vector, prefetcher).map(
+                                move |(distance, payload)| (opfamily.output(distance), payload),
+                            ),
                         ),
                         RerankMethod::Heap => Box::new(
-                            algorithm::rerank_heap::<Op<VectOwned<f16>, L2>, _>(
-                                vector, results, fetch,
-                            )
-                            .map(move |(distance, payload)| (opfamily.output(distance), payload)),
+                            rerank_heap::<Op<VectOwned<f16>, L2>, _, _>(vector, prefetcher, fetch)
+                                .map(move |(distance, payload)| {
+                                    (opfamily.output(distance), payload)
+                                }),
                         ),
                     }
                 }
@@ -215,11 +231,16 @@ impl SearchBuilder for DefaultBuilder {
                         }
                         .as_borrowed(),
                     );
-                    let results = algorithm::default_search::<Op<VectOwned<f16>, Dot>>(
+                    let results = default_search::<_, Op<VectOwned<f16>, Dot>, _>(
                         relation.clone(),
                         vector.clone(),
                         options.probes,
                         options.epsilon,
+                        bump,
+                        {
+                            let index = relation.clone();
+                            move |results| PlainPrefetcher::new(index.clone(), results)
+                        },
                     );
                     let fetch = move |payload| {
                         let (key, _) = pointer_to_kv(payload);
@@ -233,19 +254,19 @@ impl SearchBuilder for DefaultBuilder {
                         };
                         Some(RandomProject::project(raw.as_borrowed()))
                     };
-                    let method = algorithm::how(relation.clone());
+                    let method = how(relation.clone());
+                    let prefetcher = StreamPrefetcher::new(relation, results);
                     match method {
                         RerankMethod::Index => Box::new(
-                            algorithm::rerank_index::<Op<VectOwned<f16>, Dot>, _>(
-                                relation, vector, results,
-                            )
-                            .map(move |(distance, payload)| (opfamily.output(distance), payload)),
+                            rerank_index::<Op<VectOwned<f16>, Dot>, _, _>(vector, prefetcher).map(
+                                move |(distance, payload)| (opfamily.output(distance), payload),
+                            ),
                         ),
                         RerankMethod::Heap => Box::new(
-                            algorithm::rerank_heap::<Op<VectOwned<f16>, Dot>, _>(
-                                vector, results, fetch,
-                            )
-                            .map(move |(distance, payload)| (opfamily.output(distance), payload)),
+                            rerank_heap::<Op<VectOwned<f16>, Dot>, _, _>(vector, prefetcher, fetch)
+                                .map(move |(distance, payload)| {
+                                    (opfamily.output(distance), payload)
+                                }),
                         ),
                     }
                 }

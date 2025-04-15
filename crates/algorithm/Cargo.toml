@@ -12,11 +12,11 @@ random_orthogonal_matrix = { path = "../random_orthogonal_matrix" }
 simd = { path = "../simd" }
 vector = { path = "../vector" }
 
+bumpalo.workspace = true
 half.workspace = true
 paste.workspace = true
 rand.workspace = true
 serde.workspace = true
-turboselect = { git = "https://github.com/tensorchord/turboselect.git", rev = "d8753c4ffe5b47f28670fea21d56cf3658d51b9b" }
 validator.workspace = true
 zerocopy.workspace = true
 

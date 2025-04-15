@@ -16,16 +16,16 @@ pub fn prewarm(
 ) -> String {
     let message = match (opfamily.vector_kind(), opfamily.distance_kind()) {
         (VectorKind::Vecf32, DistanceKind::L2) => {
-            algorithm::prewarm::<Op<VectOwned<f32>, L2>>(index, height, check)
+            algorithm::prewarm::<_, Op<VectOwned<f32>, L2>>(index, height, check)
         }
         (VectorKind::Vecf32, DistanceKind::Dot) => {
-            algorithm::prewarm::<Op<VectOwned<f32>, Dot>>(index, height, check)
+            algorithm::prewarm::<_, Op<VectOwned<f32>, Dot>>(index, height, check)
         }
         (VectorKind::Vecf16, DistanceKind::L2) => {
-            algorithm::prewarm::<Op<VectOwned<f16>, L2>>(index, height, check)
+            algorithm::prewarm::<_, Op<VectOwned<f16>, L2>>(index, height, check)
         }
         (VectorKind::Vecf16, DistanceKind::Dot) => {
-            algorithm::prewarm::<Op<VectOwned<f16>, Dot>>(index, height, check)
+            algorithm::prewarm::<_, Op<VectOwned<f16>, Dot>>(index, height, check)
         }
     };
     match message {
@@ -36,7 +36,7 @@ pub fn prewarm(
 
 pub fn bulkdelete(
     opfamily: Opfamily,
-    index: impl RelationWrite,
+    index: impl RelationRead + RelationWrite,
     check: impl Fn(),
     callback: impl Fn(NonZero<u64>) -> bool,
 ) {
@@ -56,19 +56,19 @@ pub fn bulkdelete(
     }
 }
 
-pub fn maintain(opfamily: Opfamily, index: impl RelationWrite, check: impl Fn()) {
+pub fn maintain(opfamily: Opfamily, index: impl RelationRead + RelationWrite, check: impl Fn()) {
     match (opfamily.vector_kind(), opfamily.distance_kind()) {
         (VectorKind::Vecf32, DistanceKind::L2) => {
-            algorithm::maintain::<Op<VectOwned<f32>, L2>>(index, check)
+            algorithm::maintain::<Op<VectOwned<f32>, L2>, _>(index, check)
         }
         (VectorKind::Vecf32, DistanceKind::Dot) => {
-            algorithm::maintain::<Op<VectOwned<f32>, Dot>>(index, check)
+            algorithm::maintain::<Op<VectOwned<f32>, Dot>, _>(index, check)
         }
         (VectorKind::Vecf16, DistanceKind::L2) => {
-            algorithm::maintain::<Op<VectOwned<f16>, L2>>(index, check)
+            algorithm::maintain::<Op<VectOwned<f16>, L2>, _>(index, check)
         }
         (VectorKind::Vecf16, DistanceKind::Dot) => {
-            algorithm::maintain::<Op<VectOwned<f16>, Dot>>(index, check)
+            algorithm::maintain::<Op<VectOwned<f16>, Dot>, _>(index, check)
         }
     }
 }
@@ -109,41 +109,55 @@ pub fn build(
 
 pub fn insert(
     opfamily: Opfamily,
-    index: impl RelationWrite,
+    index: impl RelationRead + RelationWrite,
     payload: NonZero<u64>,
     vector: OwnedVector,
 ) {
+    use algorithm::PlainPrefetcher;
+    let bump = bumpalo::Bump::new();
+    let prefetch = {
+        let index = index.clone();
+        move |results| PlainPrefetcher::new(index.clone(), results)
+    };
     match (vector, opfamily.distance_kind()) {
         (OwnedVector::Vecf32(vector), DistanceKind::L2) => {
             assert!(opfamily.vector_kind() == VectorKind::Vecf32);
-            algorithm::insert::<Op<VectOwned<f32>, L2>>(
+            algorithm::insert::<_, Op<VectOwned<f32>, L2>, _>(
                 index,
                 payload,
                 RandomProject::project(vector.as_borrowed()),
+                &bump,
+                prefetch,
             )
         }
         (OwnedVector::Vecf32(vector), DistanceKind::Dot) => {
             assert!(opfamily.vector_kind() == VectorKind::Vecf32);
-            algorithm::insert::<Op<VectOwned<f32>, Dot>>(
+            algorithm::insert::<_, Op<VectOwned<f32>, Dot>, _>(
                 index,
                 payload,
                 RandomProject::project(vector.as_borrowed()),
+                &bump,
+                prefetch,
             )
         }
         (OwnedVector::Vecf16(vector), DistanceKind::L2) => {
             assert!(opfamily.vector_kind() == VectorKind::Vecf16);
-            algorithm::insert::<Op<VectOwned<f16>, L2>>(
+            algorithm::insert::<_, Op<VectOwned<f16>, L2>, _>(
                 index,
                 payload,
                 RandomProject::project(vector.as_borrowed()),
+                &bump,
+                prefetch,
             )
         }
         (OwnedVector::Vecf16(vector), DistanceKind::Dot) => {
             assert!(opfamily.vector_kind() == VectorKind::Vecf16);
-            algorithm::insert::<Op<VectOwned<f16>, Dot>>(
+            algorithm::insert::<_, Op<VectOwned<f16>, Dot>, _>(
                 index,
                 payload,
                 RandomProject::project(vector.as_borrowed()),
+                &bump,
+                prefetch,
             )
         }
     }

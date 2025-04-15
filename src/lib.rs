@@ -1,5 +1,5 @@
 #![allow(unsafe_code)]
-#![feature(lazy_get)]
+#![feature(let_chains)]
 
 mod datatype;
 mod index;

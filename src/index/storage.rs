@@ -1,4 +1,7 @@
-use algorithm::{Opaque, Page, PageGuard, RelationRead, RelationWrite};
+use algorithm::*;
+use always_equal::AlwaysEqual;
+use std::collections::VecDeque;
+use std::iter::{Chain, Flatten};
 use std::mem::{MaybeUninit, offset_of};
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
@@ -157,6 +160,25 @@ impl Page for PostgresPage {
 
 const _: () = assert!(align_of::<Opaque>() == pgrx::pg_sys::MAXIMUM_ALIGNOF as usize);
 
+pub struct PostgresBufferGuard {
+    buf: i32,
+    id: u32,
+}
+
+impl PageGuard for PostgresBufferGuard {
+    fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+impl Drop for PostgresBufferGuard {
+    fn drop(&mut self) {
+        unsafe {
+            pgrx::pg_sys::ReleaseBuffer(self.buf);
+        }
+    }
+}
+
 pub struct PostgresBufferReadGuard {
     buf: i32,
     page: NonNull<PostgresPage>,
@@ -242,9 +264,11 @@ impl PostgresRelation {
     }
 }
 
-impl RelationRead for PostgresRelation {
+impl Relation for PostgresRelation {
     type Page = PostgresPage;
+}
 
+impl RelationRead for PostgresRelation {
     type ReadGuard<'a> = PostgresBufferReadGuard;
 
     fn read(&self, id: u32) -> Self::ReadGuard<'_> {
@@ -354,4 +378,196 @@ impl RelationWrite for PostgresRelation {
             }
         }
     }
+}
+
+impl RelationPrefetch for PostgresRelation {
+    fn prefetch(&self, id: u32) {
+        assert!(id != u32::MAX, "no such page");
+        unsafe {
+            use pgrx::pg_sys::PrefetchBuffer;
+            PrefetchBuffer(self.raw, 0, id);
+        }
+    }
+}
+
+struct Cache<'b, T, I> {
+    window: VecDeque<(T, AlwaysEqual<&'b mut [u32]>)>,
+    tail: VecDeque<u32>,
+    iter: Option<I>,
+}
+
+impl<'b, T, I> Default for Cache<'b, T, I> {
+    fn default() -> Self {
+        Self {
+            window: Default::default(),
+            tail: Default::default(),
+            iter: Default::default(),
+        }
+    }
+}
+
+impl<'b, T, I: Iterator<Item = (T, AlwaysEqual<&'b mut [u32]>)>> Cache<'b, T, I> {
+    fn pop_id(&mut self) -> Option<u32> {
+        while self.tail.is_empty()
+            && let Some(iter) = self.iter.as_mut()
+            && let Some((t, AlwaysEqual(list))) = iter.next()
+        {
+            for id in list.iter().copied() {
+                self.tail.push_back(id);
+            }
+            self.window.push_back((t, AlwaysEqual(list)));
+        }
+        self.tail.pop_front()
+    }
+    fn pop_item_if(
+        &mut self,
+        predicate: impl FnOnce(&mut (T, AlwaysEqual<&'b mut [u32]>)) -> bool,
+    ) -> Option<(T, AlwaysEqual<&'b mut [u32]>)> {
+        while self.window.is_empty()
+            && let Some(iter) = self.iter.as_mut()
+            && let Some((t, AlwaysEqual(list))) = iter.next()
+        {
+            for id in list.iter().copied() {
+                self.tail.push_back(id);
+            }
+            self.window.push_back((t, AlwaysEqual(list)));
+        }
+        vec_deque_pop_front_if(&mut self.window, predicate)
+    }
+}
+
+pub struct PostgresReadStream<'b, T, I> {
+    raw: *mut pgrx::pg_sys::ReadStream,
+    cache: NonNull<Cache<'b, T, I>>,
+}
+
+impl<'b, T, I: Iterator<Item = (T, AlwaysEqual<&'b mut [u32]>)>> ReadStream<'b, T>
+    for PostgresReadStream<'b, T, I>
+{
+    type Relation = PostgresRelation;
+
+    type Inner = Chain<
+        std::collections::vec_deque::IntoIter<(T, AlwaysEqual<&'b mut [u32]>)>,
+        Flatten<std::option::IntoIter<I>>,
+    >;
+
+    fn next_if(
+        &mut self,
+        predicate: impl FnOnce(&mut (T, AlwaysEqual<&'b mut [u32]>)) -> bool,
+    ) -> Option<(T, Vec<PostgresBufferReadGuard>)> {
+        if let Some((t, AlwaysEqual(list))) = unsafe { self.cache.as_mut().pop_item_if(predicate) }
+        {
+            let list = list
+                .iter()
+                .copied()
+                .map(|_| unsafe {
+                    use pgrx::pg_sys::{
+                        BUFFER_LOCK_SHARE, BufferGetPage, LockBuffer, read_stream_next_buffer,
+                    };
+                    let buf = read_stream_next_buffer(self.raw, core::ptr::null_mut());
+                    LockBuffer(buf, BUFFER_LOCK_SHARE as _);
+                    let page = NonNull::new(BufferGetPage(buf).cast()).expect("failed to get page");
+                    PostgresBufferReadGuard {
+                        buf,
+                        page,
+                        id: pgrx::pg_sys::BufferGetBlockNumber(buf),
+                    }
+                })
+                .collect::<Vec<_>>();
+            Some((t, list))
+        } else {
+            None
+        }
+    }
+
+    fn into_inner(mut self) -> Self::Inner {
+        let cache = unsafe { std::mem::take(self.cache.as_mut()) };
+        cache
+            .window
+            .into_iter()
+            .chain(cache.iter.into_iter().flatten())
+    }
+}
+
+impl<'b, T, I> Drop for PostgresReadStream<'b, T, I> {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = std::mem::take(self.cache.as_mut());
+            if !std::thread::panicking() && pgrx::pg_sys::IsTransactionState() {
+                pgrx::pg_sys::read_stream_end(self.raw);
+            }
+            let _ = box_from_non_null(self.cache);
+        }
+    }
+}
+
+impl RelationReadStream for PostgresRelation {
+    type ReadStream<'s, 'b, T, I: Iterator<Item = (T, AlwaysEqual<&'b mut [u32]>)>> =
+        PostgresReadStream<'b, T, I>;
+    fn read_stream<'s, 'b, T, I: Iterator<Item = (T, AlwaysEqual<&'b mut [u32]>)>>(
+        &'s self,
+        iter: I,
+    ) -> Self::ReadStream<'s, 'b, T, I> {
+        #[pgrx::pg_guard]
+        unsafe extern "C-unwind" fn callback<
+            'b,
+            T,
+            I: Iterator<Item = (T, AlwaysEqual<&'b mut [u32]>)>,
+        >(
+            _stream: *mut pgrx::pg_sys::ReadStream,
+            callback_private_data: *mut core::ffi::c_void,
+            _per_buffer_data: *mut core::ffi::c_void,
+        ) -> pgrx::pg_sys::BlockNumber {
+            unsafe {
+                let inner = callback_private_data.cast::<Cache<'b, T, I>>();
+                (*inner)
+                    .pop_id()
+                    .unwrap_or(pgrx::pg_sys::InvalidBlockNumber)
+            }
+        }
+        let cache = box_into_non_null(Box::new(Cache {
+            window: VecDeque::new(),
+            tail: VecDeque::new(),
+            iter: Some(iter),
+        }));
+        let raw = unsafe {
+            use pgrx::pg_sys::{ForkNumber, READ_STREAM_DEFAULT, read_stream_begin_relation};
+            read_stream_begin_relation(
+                READ_STREAM_DEFAULT as i32,
+                core::ptr::null_mut(),
+                self.raw,
+                ForkNumber::MAIN_FORKNUM,
+                Some(callback::<T, I>),
+                cache.as_ptr().cast(),
+                0,
+            )
+        };
+        PostgresReadStream { raw, cache }
+    }
+}
+
+// Emulate unstable library feature `vec_deque_pop_if`.
+// See https://github.com/rust-lang/rust/issues/135889.
+
+fn vec_deque_pop_front_if<T>(
+    this: &mut VecDeque<T>,
+    predicate: impl FnOnce(&mut T) -> bool,
+) -> Option<T> {
+    let first = this.front_mut()?;
+    if predicate(first) {
+        this.pop_front()
+    } else {
+        None
+    }
+}
+
+// Emulate unstable library feature `box_vec_non_null`.
+// See https://github.com/rust-lang/rust/issues/130364.
+
+fn box_into_non_null<T>(b: Box<T>) -> NonNull<T> {
+    unsafe { NonNull::new_unchecked(Box::into_raw(b)) }
+}
+
+unsafe fn box_from_non_null<T>(ptr: NonNull<T>) -> Box<T> {
+    unsafe { Box::from_raw(ptr.as_ptr()) }
 }
