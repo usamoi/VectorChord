@@ -12,6 +12,7 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
+#![feature(select_unpredictable)]
 #![allow(clippy::type_complexity)]
 
 mod build;
@@ -38,11 +39,11 @@ pub mod types;
 
 use always_equal::AlwaysEqual;
 pub use build::build;
-pub use bulkdelete::bulkdelete;
+pub use bulkdelete::{bulkdelete, bulkdelete_vectors};
 pub use cache::cache;
 pub use cost::cost;
 pub use fast_heap::FastHeap;
-pub use insert::insert;
+pub use insert::{insert, insert_vector};
 pub use maintain::maintain;
 pub use prefetcher::*;
 pub use prewarm::prewarm;
@@ -185,13 +186,10 @@ pub enum RerankMethod {
 }
 
 pub(crate) struct Branch<T> {
-    pub head: u16,
-    pub dis_u_2: f32,
-    pub factor_ppc: f32,
-    pub factor_ip: f32,
-    pub factor_err: f32,
-    pub signs: Vec<bool>,
+    pub code: rabitq::Code,
+    pub delta: f32,
     pub prefetch: Vec<u32>,
+    pub head: u16,
     pub extra: T,
 }
 

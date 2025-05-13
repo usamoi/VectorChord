@@ -18,7 +18,7 @@ pub type BinaryLut = (
     (f32, f32, f32, f32),
     (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>),
 );
-pub type BinaryCode<'a> = (f32, f32, f32, f32, &'a [u64]);
+pub type BinaryCode<'a> = ((f32, f32, f32, f32), &'a [u64]);
 
 pub fn preprocess(vector: &[f32]) -> BinaryLut {
     let dis_v_2 = f32::reduce_sum_of_x2(vector);
@@ -33,7 +33,7 @@ pub fn preprocess(vector: &[f32]) -> BinaryLut {
 
 pub fn process_l2(
     lut: &BinaryLut,
-    (dis_u_2, factor_ppc, factor_ip, factor_err, t): BinaryCode<'_>,
+    ((dis_u_2, factor_ppc, factor_ip, factor_err), t): BinaryCode<'_>,
 ) -> (f32, f32) {
     let &((dis_v_2, b, k, qvector_sum), ref s) = lut;
     let value = asymmetric_binary_dot_product(t, s) as u16;
@@ -45,7 +45,7 @@ pub fn process_l2(
 
 pub fn process_dot(
     lut: &BinaryLut,
-    (_, factor_ppc, factor_ip, factor_err, t): BinaryCode<'_>,
+    ((_, factor_ppc, factor_ip, factor_err), t): BinaryCode<'_>,
 ) -> (f32, f32) {
     let &((dis_v_2, b, k, qvector_sum), ref s) = lut;
     let value = asymmetric_binary_dot_product(t, s) as u16;
@@ -69,7 +69,7 @@ pub(crate) fn binarize(vector: &[u8]) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>
     (t0, t1, t2, t3)
 }
 
-pub(crate) fn asymmetric_binary_dot_product(
+pub fn asymmetric_binary_dot_product(
     x: &[u64],
     y: &(Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>),
 ) -> u32 {

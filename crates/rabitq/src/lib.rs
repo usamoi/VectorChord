@@ -105,3 +105,24 @@ pub fn preprocess(vector: &[f32]) -> (BlockLut, BinaryLut) {
         ((dis_v_2, b, k, qvector_sum), binary),
     )
 }
+
+pub fn process_l2(
+    value: u16,
+    (dis_u_2, factor_ppc, factor_ip, factor_err): (f32, f32, f32, f32),
+    (dis_v_2, b, k, qvector_sum): (f32, f32, f32, f32),
+) -> (f32, f32) {
+    let rough =
+        dis_u_2 + dis_v_2 + b * factor_ppc + ((2.0 * value as f32) - qvector_sum) * factor_ip * k;
+    let err = factor_err * dis_v_2.sqrt();
+    (rough, err)
+}
+
+pub fn process_dot(
+    value: u16,
+    (_, factor_ppc, factor_ip, factor_err): (f32, f32, f32, f32),
+    (dis_v_2, b, k, qvector_sum): (f32, f32, f32, f32),
+) -> (f32, f32) {
+    let rough = 0.5 * b * factor_ppc + 0.5 * ((2.0 * value as f32) - qvector_sum) * factor_ip * k;
+    let err = 0.5 * factor_err * dis_v_2.sqrt();
+    (rough, err)
+}

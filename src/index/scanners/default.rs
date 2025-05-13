@@ -16,7 +16,7 @@ use super::{Io, SearchBuilder, SearchFetcher, SearchOptions};
 use crate::index::algorithm::*;
 use crate::index::am::pointer_to_kv;
 use crate::index::opclass::{Opfamily, Sphere};
-use algorithm::operator::{Dot, L2, Op};
+use algorithm::operator::{self, Dot, L2};
 use algorithm::types::{DistanceKind, OwnedVector, VectorKind};
 use algorithm::*;
 use half::f16;
@@ -101,39 +101,39 @@ impl SearchBuilder for DefaultBuilder {
             index,
             hints: Hints::default().full(true),
         };
+        let f = move |(distance, payload)| (opfamily.output(distance), payload);
         let iter: Box<dyn Iterator<Item = (f32, NonZero<u64>)>> =
             match (opfamily.vector_kind(), opfamily.distance_kind()) {
                 (VectorKind::Vecf32, DistanceKind::L2) => {
-                    let vector = RandomProject::project(
-                        if let OwnedVector::Vecf32(vector) = vector {
-                            vector
-                        } else {
-                            unreachable!()
-                        }
-                        .as_borrowed(),
-                    );
+                    type Op = operator::Op<VectOwned<f32>, L2>;
+                    let unprojected = if let OwnedVector::Vecf32(vector) = vector {
+                        vector
+                    } else {
+                        unreachable!()
+                    };
+                    let projected = RandomProject::project(unprojected.as_borrowed());
                     let results = match options.io_search {
-                        Io::Plain => default_search::<_, Op<VectOwned<f32>, L2>>(
+                        Io::Plain => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
                             make_h0_plain_prefetcher,
                         ),
-                        Io::Simple => default_search::<_, Op<VectOwned<f32>, L2>>(
+                        Io::Simple => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
                             make_h0_simple_prefetcher,
                         ),
-                        Io::Stream => default_search::<_, Op<VectOwned<f32>, L2>>(
+                        Io::Stream => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
@@ -151,90 +151,60 @@ impl SearchBuilder for DefaultBuilder {
                         } else {
                             unreachable!()
                         };
-                        Some(RandomProject::project(raw.as_borrowed()))
+                        Some(raw)
                     };
                     let method = how(index);
+                    let sequence = BinaryHeap::from(results);
                     match (method, options.io_rerank) {
                         (RerankMethod::Index, Io::Plain) => {
-                            let prefetcher =
-                                PlainPrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f32>, L2>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher = PlainPrefetcher::new(index, sequence);
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Index, Io::Simple) => {
-                            let prefetcher = SimplePrefetcher::<'a, R, BinaryHeap<_>>::new(
-                                index,
-                                results.into(),
-                            );
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f32>, L2>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher = SimplePrefetcher::new(index, sequence);
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Index, Io::Stream) => {
-                            let prefetcher = StreamPrefetcher::<_, BinaryHeap<_>>::new(
-                                index,
-                                results.into(),
-                                Hints::default(),
-                            );
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f32>, L2>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher =
+                                StreamPrefetcher::new(index, sequence, Hints::default());
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Heap, _) => {
-                            let prefetcher =
-                                PlainPrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_heap::<Op<VectOwned<f32>, L2>, _, _>(
-                                    vector, prefetcher, fetch,
-                                )
-                                .map(move |(distance, payload)| {
-                                    (opfamily.output(distance), payload)
-                                }),
-                            )
+                            let prefetcher = PlainPrefetcher::new(index, sequence);
+                            Box::new(rerank_heap::<Op, _, _>(unprojected, prefetcher, fetch).map(f))
                         }
                     }
                 }
                 (VectorKind::Vecf32, DistanceKind::Dot) => {
-                    let vector = RandomProject::project(
-                        if let OwnedVector::Vecf32(vector) = vector {
-                            vector
-                        } else {
-                            unreachable!()
-                        }
-                        .as_borrowed(),
-                    );
+                    type Op = operator::Op<VectOwned<f32>, Dot>;
+                    let unprojected = if let OwnedVector::Vecf32(vector) = vector {
+                        vector
+                    } else {
+                        unreachable!()
+                    };
+                    let projected = RandomProject::project(unprojected.as_borrowed());
                     let results = match options.io_search {
-                        Io::Plain => default_search::<_, Op<VectOwned<f32>, Dot>>(
+                        Io::Plain => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
                             make_h0_plain_prefetcher,
                         ),
-                        Io::Simple => default_search::<_, Op<VectOwned<f32>, Dot>>(
+                        Io::Simple => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
                             make_h0_simple_prefetcher,
                         ),
-                        Io::Stream => default_search::<_, Op<VectOwned<f32>, Dot>>(
+                        Io::Stream => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
@@ -252,88 +222,60 @@ impl SearchBuilder for DefaultBuilder {
                         } else {
                             unreachable!()
                         };
-                        Some(RandomProject::project(raw.as_borrowed()))
+                        Some(raw)
                     };
                     let method = how(index);
+                    let sequence = BinaryHeap::from(results);
                     match (method, options.io_rerank) {
                         (RerankMethod::Index, Io::Plain) => {
-                            let prefetcher =
-                                PlainPrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f32>, Dot>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher = PlainPrefetcher::new(index, sequence);
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Index, Io::Simple) => {
-                            let prefetcher =
-                                SimplePrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f32>, Dot>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher = SimplePrefetcher::new(index, sequence);
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Index, Io::Stream) => {
-                            let prefetcher = StreamPrefetcher::<_, BinaryHeap<_>>::new(
-                                index,
-                                results.into(),
-                                Hints::default(),
-                            );
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f32>, Dot>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher =
+                                StreamPrefetcher::new(index, sequence, Hints::default());
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Heap, _) => {
-                            let prefetcher =
-                                PlainPrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_heap::<Op<VectOwned<f32>, Dot>, _, _>(
-                                    vector, prefetcher, fetch,
-                                )
-                                .map(move |(distance, payload)| {
-                                    (opfamily.output(distance), payload)
-                                }),
-                            )
+                            let prefetcher = PlainPrefetcher::new(index, sequence);
+                            Box::new(rerank_heap::<Op, _, _>(unprojected, prefetcher, fetch).map(f))
                         }
                     }
                 }
                 (VectorKind::Vecf16, DistanceKind::L2) => {
-                    let vector = RandomProject::project(
-                        if let OwnedVector::Vecf16(vector) = vector {
-                            vector
-                        } else {
-                            unreachable!()
-                        }
-                        .as_borrowed(),
-                    );
+                    type Op = operator::Op<VectOwned<f16>, L2>;
+                    let unprojected = if let OwnedVector::Vecf16(vector) = vector {
+                        vector
+                    } else {
+                        unreachable!()
+                    };
+                    let projected = RandomProject::project(unprojected.as_borrowed());
                     let results = match options.io_search {
-                        Io::Plain => default_search::<_, Op<VectOwned<f16>, L2>>(
+                        Io::Plain => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
                             make_h0_plain_prefetcher,
                         ),
-                        Io::Simple => default_search::<_, Op<VectOwned<f16>, L2>>(
+                        Io::Simple => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
                             make_h0_simple_prefetcher,
                         ),
-                        Io::Stream => default_search::<_, Op<VectOwned<f16>, L2>>(
+                        Io::Stream => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
@@ -351,88 +293,60 @@ impl SearchBuilder for DefaultBuilder {
                         } else {
                             unreachable!()
                         };
-                        Some(RandomProject::project(raw.as_borrowed()))
+                        Some(raw)
                     };
                     let method = how(index);
+                    let sequence = BinaryHeap::from(results);
                     match (method, options.io_rerank) {
                         (RerankMethod::Index, Io::Plain) => {
-                            let prefetcher =
-                                PlainPrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f16>, L2>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher = PlainPrefetcher::new(index, sequence);
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Index, Io::Simple) => {
-                            let prefetcher =
-                                SimplePrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f16>, L2>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher = SimplePrefetcher::new(index, sequence);
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Index, Io::Stream) => {
-                            let prefetcher = StreamPrefetcher::<_, BinaryHeap<_>>::new(
-                                index,
-                                results.into(),
-                                Hints::default(),
-                            );
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f16>, L2>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher =
+                                StreamPrefetcher::new(index, sequence, Hints::default());
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Heap, _) => {
-                            let prefetcher =
-                                PlainPrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_heap::<Op<VectOwned<f16>, L2>, _, _>(
-                                    vector, prefetcher, fetch,
-                                )
-                                .map(move |(distance, payload)| {
-                                    (opfamily.output(distance), payload)
-                                }),
-                            )
+                            let prefetcher = PlainPrefetcher::new(index, sequence);
+                            Box::new(rerank_heap::<Op, _, _>(unprojected, prefetcher, fetch).map(f))
                         }
                     }
                 }
                 (VectorKind::Vecf16, DistanceKind::Dot) => {
-                    let vector = RandomProject::project(
-                        if let OwnedVector::Vecf16(vector) = vector {
-                            vector
-                        } else {
-                            unreachable!()
-                        }
-                        .as_borrowed(),
-                    );
+                    type Op = operator::Op<VectOwned<f16>, Dot>;
+                    let unprojected = if let OwnedVector::Vecf16(vector) = vector {
+                        vector
+                    } else {
+                        unreachable!()
+                    };
+                    let projected = RandomProject::project(unprojected.as_borrowed());
                     let results = match options.io_search {
-                        Io::Plain => default_search::<_, Op<VectOwned<f16>, Dot>>(
+                        Io::Plain => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
                             make_h0_plain_prefetcher,
                         ),
-                        Io::Simple => default_search::<_, Op<VectOwned<f16>, Dot>>(
+                        Io::Simple => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
                             make_h0_simple_prefetcher,
                         ),
-                        Io::Stream => default_search::<_, Op<VectOwned<f16>, Dot>>(
+                        Io::Stream => default_search::<_, Op>(
                             index,
-                            vector.clone(),
+                            projected.as_borrowed(),
                             options.probes,
                             options.epsilon,
                             bump,
@@ -450,54 +364,27 @@ impl SearchBuilder for DefaultBuilder {
                         } else {
                             unreachable!()
                         };
-                        Some(RandomProject::project(raw.as_borrowed()))
+                        Some(raw)
                     };
                     let method = how(index);
+                    let sequence = BinaryHeap::from(results);
                     match (method, options.io_rerank) {
                         (RerankMethod::Index, Io::Plain) => {
-                            let prefetcher =
-                                PlainPrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f16>, Dot>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher = PlainPrefetcher::new(index, sequence);
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Index, Io::Simple) => {
-                            let prefetcher =
-                                SimplePrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f16>, Dot>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher = SimplePrefetcher::new(index, sequence);
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Index, Io::Stream) => {
-                            let prefetcher = StreamPrefetcher::<_, BinaryHeap<_>>::new(
-                                index,
-                                results.into(),
-                                Hints::default(),
-                            );
-                            Box::new(
-                                rerank_index::<Op<VectOwned<f16>, Dot>, _, _>(vector, prefetcher)
-                                    .map(move |(distance, payload)| {
-                                        (opfamily.output(distance), payload)
-                                    }),
-                            )
+                            let prefetcher =
+                                StreamPrefetcher::new(index, sequence, Hints::default());
+                            Box::new(rerank_index::<Op, _, _>(unprojected, prefetcher).map(f))
                         }
                         (RerankMethod::Heap, _) => {
-                            let prefetcher =
-                                PlainPrefetcher::<_, BinaryHeap<_>>::new(index, results.into());
-                            Box::new(
-                                rerank_heap::<Op<VectOwned<f16>, Dot>, _, _>(
-                                    vector, prefetcher, fetch,
-                                )
-                                .map(move |(distance, payload)| {
-                                    (opfamily.output(distance), payload)
-                                }),
-                            )
+                            let prefetcher = PlainPrefetcher::new(index, sequence);
+                            Box::new(rerank_heap::<Op, _, _>(unprojected, prefetcher, fetch).map(f))
                         }
                     }
                 }
