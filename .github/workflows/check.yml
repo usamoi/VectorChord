@@ -308,3 +308,73 @@ jobs:
             ./build/postgresql-${{ matrix.version }}-vchord_0.0.0-1_${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }}.deb
           compression-level: 9
           retention-days: 14
+
+  psql_macos:
+    strategy:
+      matrix:
+        version: ["17"]
+        arch: ["aarch64"]
+
+    runs-on: "macos-15"
+
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: true
+
+    steps:
+      - name: Set up Environment
+        run: |
+          rustup set profile
+
+          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install postgresql@${{ matrix.version }}
+          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install pgvector
+          brew services start postgresql@${{ matrix.version }}
+          for i in {1..60}; do [ -S /tmp/.s.PGSQL.5432 ] && echo "PostgreSQL ready" && break || sleep 1; done
+          [ -S /tmp/.s.PGSQL.5432 ] || echo "PostgreSQL socket not found after 60 seconds"
+          $(brew --prefix postgresql@${{ matrix.version }})/bin/createdb -O $USER $USER
+          $(brew --prefix postgresql@${{ matrix.version }})/bin/psql -c 'ALTER SYSTEM SET shared_preload_libraries = "vchord.dylib"'
+          brew services stop postgresql@${{ matrix.version }}
+
+          curl -fsSL https://github.com/tensorchord/pgrx/releases/download/v0.14.1/cargo-pgrx-v0.14.1-${{ matrix.arch }}-apple-darwin.tar.gz | tar -xOzf - ./cargo-pgrx | tee /usr/local/bin/cargo-pgrx > /dev/null && chmod 755 /usr/local/bin/cargo-pgrx
+
+          curl -fsSL https://github.com/risinglightdb/sqllogictest-rs/releases/download/v0.26.4/sqllogictest-bin-v0.26.4-${{ matrix.arch }}-apple-darwin.tar.gz | tar -xOzf - ./sqllogictest | tee /usr/local/bin/sqllogictest > /dev/null && chmod 755 /usr/local/bin/sqllogictest
+
+      - name: Set up Sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clippy
+        run: |
+          env CC=$(brew --prefix llvm@18)/bin/clang PGRX_PG_CONFIG_PATH=$(brew --prefix postgresql@${{ matrix.version }})/bin/pg_config cargo clippy -p vchord --features pg${{ matrix.version }} -- --no-deps
+
+      - name: Install
+        run: |
+          env CC=$(brew --prefix llvm@18)/bin/clang PGRX_PG_CONFIG_PATH=$(brew --prefix postgresql@${{ matrix.version }})/bin/pg_config cargo pgrx install -p vchord --features pg${{ matrix.version }} --release --sudo --pg-config=$(brew --prefix postgresql@${{ matrix.version }})/bin/pg_config
+
+      - name: Sqllogictest
+        run: |
+          brew services start postgresql@${{ matrix.version }}
+          for i in {1..60}; do [ -S /tmp/.s.PGSQL.5432 ] && echo "PostgreSQL ready" && break || sleep 1; done
+          [ -S /tmp/.s.PGSQL.5432 ] || echo "PostgreSQL socket not found after 60 seconds"
+          $(brew --prefix postgresql@${{ matrix.version }})/bin/psql -c 'CREATE EXTENSION IF NOT EXISTS vchord CASCADE;'
+          sqllogictest --db $USER --user $USER './tests/general/*.slt'
+
+      - name: Sqllogictest(PostgreSQL 17 features)
+        if: matrix.version == '17'
+        run: |
+          brew services start postgresql@${{ matrix.version }}
+          for i in {1..60}; do [ -S /tmp/.s.PGSQL.5432 ] && echo "PostgreSQL ready" && break || sleep 1; done
+          [ -S /tmp/.s.PGSQL.5432 ] || echo "PostgreSQL socket not found after 60 seconds"
+          $(brew --prefix postgresql@${{ matrix.version }})/bin/psql -c 'CREATE EXTENSION IF NOT EXISTS vchord CASCADE;'
+          sqllogictest --db $USER --user $USER './tests/pg17/*.slt'
+
+      - name: Sqllogictest(PostgreSQL 16 features)
+        if: matrix.version == '16'
+        run: |
+          brew services start postgresql@${{ matrix.version }}
+          for i in {1..60}; do [ -S /tmp/.s.PGSQL.5432 ] && echo "PostgreSQL ready" && break || sleep 1; done
+          [ -S /tmp/.s.PGSQL.5432 ] || echo "PostgreSQL socket not found after 60 seconds"
+          $(brew --prefix postgresql@${{ matrix.version }})/bin/psql -c 'CREATE EXTENSION IF NOT EXISTS vchord CASCADE;'
+          sqllogictest --db $USER --user $USER './tests/pg16/*.slt'
