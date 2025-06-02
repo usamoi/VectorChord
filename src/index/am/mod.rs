@@ -59,7 +59,7 @@ pub fn init() {
         unsafe {
             kind = pgrx::pg_sys::add_reloption_kind();
             pgrx::pg_sys::add_string_reloption(
-                kind,
+                kind as _,
                 c"options".as_ptr(),
                 c"Vector index options, represented as a TOML string.".as_ptr(),
                 c"".as_ptr(),
