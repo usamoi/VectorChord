@@ -12,10 +12,6 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-#![cfg_attr(target_arch = "x86_64", feature(avx512_target_feature))]
-#![cfg_attr(target_arch = "x86_64", feature(stdarch_x86_avx512))]
-#![feature(slice_as_chunks)]
-#![feature(select_unpredictable)]
 #![allow(unsafe_code)]
 
 mod aligned;
