@@ -17,7 +17,8 @@ use crate::tape::TapeWriter;
 use crate::tape_writer::H1TapeWriter;
 use crate::tuples::*;
 use crate::types::*;
-use crate::{Branch, RelationWrite};
+use crate::{Branch, Opaque};
+use algo::{Page, RelationWrite};
 use vector::{VectorBorrowed, VectorOwned};
 
 pub fn build<R: RelationWrite, O: Operator>(
@@ -25,7 +26,9 @@ pub fn build<R: RelationWrite, O: Operator>(
     vchordrq_options: VchordrqIndexOptions,
     index: &R,
     structures: Vec<Structure<O::Vector>>,
-) {
+) where
+    R::Page: Page<Opaque = Opaque>,
+{
     let dims = vector_options.dims;
     let is_residual = vchordrq_options.residual_quantization;
     let mut meta = TapeWriter::<_, MetaTuple>::create(index, false);

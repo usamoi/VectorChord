@@ -14,7 +14,9 @@
 
 use crate::operator::Accessor1;
 use crate::tuples::*;
-use crate::{Page, PageGuard, PrefetcherSequenceFamily, RelationRead, RelationWrite, freepages};
+use crate::{Opaque, Page, PageGuard, freepages};
+use algo::prefetcher::{Prefetcher, PrefetcherSequenceFamily};
+use algo::{RelationRead, RelationWrite};
 use std::marker::PhantomData;
 use std::num::NonZero;
 
@@ -32,9 +34,16 @@ where
 impl<'a, R, T> TapeWriter<'a, R, T>
 where
     R: RelationWrite + 'a,
+    R::Page: Page<Opaque = Opaque>,
 {
     pub fn create(index: &'a R, tracking_freespace: bool) -> Self {
-        let mut head = index.extend(tracking_freespace);
+        let mut head = index.extend(
+            Opaque {
+                next: u32::MAX,
+                skip: u32::MAX,
+            },
+            tracking_freespace,
+        );
         head.get_opaque_mut().skip = head.id();
         let first = head.id();
         Self {
@@ -55,7 +64,13 @@ where
         if self.head.len() == 0 {
             panic!("implementation: a clear page cannot accommodate a single tuple");
         }
-        let next = self.index.extend(self.tracking_freespace);
+        let next = self.index.extend(
+            Opaque {
+                next: u32::MAX,
+                skip: u32::MAX,
+            },
+            self.tracking_freespace,
+        );
         self.head.get_opaque_mut().next = next.id();
         self.head = next;
     }
@@ -64,6 +79,7 @@ where
 impl<'a, R, T> TapeWriter<'a, R, T>
 where
     R: RelationWrite + 'a,
+    R::Page: Page<Opaque = Opaque>,
     T: Tuple,
 {
     pub fn push(&mut self, x: T) -> (u32, u16) {
@@ -71,7 +87,13 @@ where
         if let Some(i) = self.head.alloc(&bytes) {
             (self.head.id(), i)
         } else {
-            let next = self.index.extend(self.tracking_freespace);
+            let next = self.index.extend(
+                Opaque {
+                    next: u32::MAX,
+                    skip: u32::MAX,
+                },
+                self.tracking_freespace,
+            );
             self.head.get_opaque_mut().next = next.id();
             self.head = next;
             if let Some(i) = self.head.alloc(&bytes) {
@@ -180,10 +202,9 @@ where
 {
     let mut t = p.prefetch(iter.peekable());
     std::iter::from_fn(move || {
-        use crate::prefetcher::Prefetcher;
         let (_, mut x) = t.next()?;
-        let ret = x.pop().expect("should be at least one element");
-        assert!(x.pop().is_none(), "should be at most one element");
+        let ret = x.next().expect("should be at least one element");
+        assert!(x.next().is_none(), "should be at most one element");
         Some(ret)
     })
 }
@@ -191,6 +212,7 @@ where
 pub fn by_next<'r, R>(index: &'r R, first: u32) -> impl Iterator<Item = R::ReadGuard<'r>>
 where
     R: RelationRead + 'r,
+    R::Page: Page<Opaque = Opaque>,
 {
     let mut current = first;
     std::iter::from_fn(move || {
@@ -296,13 +318,16 @@ pub fn read_appendable_tape<'r, R, T>(
 }
 
 #[allow(clippy::collapsible_else_if)]
-pub fn append(
-    index: &(impl RelationRead + RelationWrite),
+pub fn append<R: RelationRead + RelationWrite>(
+    index: &R,
     first: u32,
     bytes: &[u8],
     tracking_freespace: bool,
     freepages_first: Option<u32>,
-) -> (u32, u16) {
+) -> (u32, u16)
+where
+    R::Page: Page<Opaque = Opaque>,
+{
     assert!(!tracking_freespace || freepages_first.is_none());
     assert!(first != u32::MAX);
     let mut current = first;
@@ -318,13 +343,28 @@ pub fn append(
                 let mut extend = {
                     if let Some(freepages_first) = freepages_first {
                         if let Some(mut guard) = freepages::alloc(index, freepages_first) {
-                            guard.clear();
+                            guard.clear(Opaque {
+                                next: u32::MAX,
+                                skip: u32::MAX,
+                            });
                             guard
                         } else {
-                            index.extend(tracking_freespace)
+                            index.extend(
+                                Opaque {
+                                    next: u32::MAX,
+                                    skip: u32::MAX,
+                                },
+                                tracking_freespace,
+                            )
                         }
                     } else {
-                        index.extend(tracking_freespace)
+                        index.extend(
+                            Opaque {
+                                next: u32::MAX,
+                                skip: u32::MAX,
+                            },
+                            tracking_freespace,
+                        )
                     }
                 };
                 write.get_opaque_mut().next = extend.id();

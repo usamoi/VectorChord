@@ -14,9 +14,10 @@
 
 use crate::closure_lifetime_binder::id_4;
 use crate::operator::*;
-use crate::prefetcher::Prefetcher;
 use crate::tuples::{MetaTuple, WithReader};
-use crate::{Page, RelationRead, RerankMethod, vectors};
+use crate::{Page, vectors};
+use algo::prefetcher::Prefetcher;
+use algo::{RelationRead, RerankMethod};
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use std::cmp::Reverse;
@@ -50,7 +51,7 @@ pub struct Reranker<T, F, P> {
 
 impl<'r, 'b, T, F, P> Iterator for Reranker<T, F, P>
 where
-    F: FnMut(NonZero<u64>, Vec<<P::R as RelationRead>::ReadGuard<'r>>, u16) -> Option<Distance>,
+    F: FnMut(NonZero<u64>, P::Guards, u16) -> Option<Distance>,
     P: Prefetcher<'r, Item = ((Reverse<Distance>, AlwaysEqual<T>), AlwaysEqual<Extra<'b>>)>,
 {
     type Item = (Distance, NonZero<u64>);
@@ -84,17 +85,13 @@ pub fn rerank_index<
 >(
     vector: O::Vector,
     prefetcher: P,
-) -> Reranker<
-    T,
-    impl FnMut(NonZero<u64>, Vec<<P::R as RelationRead>::ReadGuard<'_>>, u16) -> Option<Distance>,
-    P,
-> {
+) -> Reranker<T, impl FnMut(NonZero<u64>, P::Guards, u16) -> Option<Distance>, P> {
     Reranker {
         prefetcher,
         cache: BinaryHeap::new(),
-        f: id_4::<_, P::R, _, _, _>(move |payload, prefetch, head| {
+        f: id_4::<_, P, _, _, _>(move |payload, prefetch, head| {
             vectors::read_for_h0_tuple::<P::R, O, _>(
-                prefetch.into_iter(),
+                prefetch,
                 head,
                 payload,
                 LTryAccess::new(
@@ -117,15 +114,11 @@ pub fn rerank_heap<
     vector: O::Vector,
     prefetcher: P,
     mut fetch: impl FnMut(NonZero<u64>) -> Option<O::Vector> + 'b,
-) -> Reranker<
-    T,
-    impl FnMut(NonZero<u64>, Vec<<P::R as RelationRead>::ReadGuard<'_>>, u16) -> Option<Distance>,
-    P,
-> {
+) -> Reranker<T, impl FnMut(NonZero<u64>, P::Guards, u16) -> Option<Distance>, P> {
     Reranker {
         prefetcher,
         cache: BinaryHeap::new(),
-        f: id_4::<_, P::R, _, _, _>(move |payload, _, _| {
+        f: id_4::<_, P, _, _, _>(move |payload, _, _| {
             let unpack = O::Vector::unpack(vector.as_borrowed());
             let vector = fetch(payload)?;
             let vector = O::Vector::unpack(vector.as_borrowed());

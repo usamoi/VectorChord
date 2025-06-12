@@ -12,7 +12,7 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-use crate::Sequence;
+use algo::Sequence;
 use std::collections::BinaryHeap;
 use std::num::NonZero;
 

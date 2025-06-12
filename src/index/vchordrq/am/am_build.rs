@@ -13,12 +13,15 @@
 // Copyright (c) 2025 TensorChord Inc.
 
 use crate::datatype::typmod::Typmod;
-use crate::index::am::{Reloption, ctid_to_key, kv_to_pointer};
-use crate::index::opclass::{Opfamily, opfamily};
+use crate::index::fetcher::*;
 use crate::index::storage::{PostgresPage, PostgresRelation};
-use crate::index::types::*;
+use crate::index::vchordrq::am::Reloption;
+use crate::index::vchordrq::opclass::{Opfamily, opfamily};
+use crate::index::vchordrq::types::*;
+use algo::{
+    Page, PageGuard, Relation, RelationRead, RelationReadTypes, RelationWrite, RelationWriteTypes,
+};
 use algorithm::types::*;
-use algorithm::{PageGuard, Relation, RelationRead, RelationWrite};
 use half::f16;
 use pgrx::pg_sys::{Datum, ItemPointerData};
 use rand::Rng;
@@ -323,7 +326,7 @@ pub unsafe extern "C-unwind" fn ambuild(
         }
     };
     reporter.phase(BuildPhase::from_code(BuildPhaseCode::Build));
-    crate::index::algorithm::build(vector_options, vchordrq_options.index, &index, structures);
+    crate::index::vchordrq::algo::build(vector_options, vchordrq_options.index, &index, structures);
     reporter.phase(BuildPhase::from_code(BuildPhaseCode::Inserting));
     let cache = if vchordrq_options.build.pin {
         let mut trace = algorithm::cache(&index);
@@ -331,7 +334,7 @@ pub unsafe extern "C-unwind" fn ambuild(
         trace.dedup();
         if let Some(max) = trace.last().copied() {
             let mut mapping = vec![u32::MAX; 1 + max as usize];
-            let mut pages = Vec::<Box<PostgresPage>>::with_capacity(trace.len());
+            let mut pages = Vec::<Box<PostgresPage<algorithm::Opaque>>>::with_capacity(trace.len());
             for id in trace {
                 mapping[id as usize] = pages.len() as u32;
                 pages.push(index.read(id).clone_into_boxed());
@@ -388,7 +391,7 @@ pub unsafe extern "C-unwind" fn ambuild(
             for (vector, extra) in store {
                 let key = ctid_to_key(ctid);
                 let payload = kv_to_pointer((key, extra));
-                crate::index::algorithm::insert(opfamily, &index, payload, vector, true);
+                crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
             }
             indtuples += 1;
             reporter.tuples_done(indtuples);
@@ -399,7 +402,7 @@ pub unsafe extern "C-unwind" fn ambuild(
         pgrx::check_for_interrupts!();
     };
     reporter.phase(BuildPhase::from_code(BuildPhaseCode::Compacting));
-    crate::index::algorithm::maintain(opfamily, &index, check);
+    crate::index::vchordrq::algo::maintain(opfamily, &index, check);
     unsafe { pgrx::pgbox::PgBox::<pgrx::pg_sys::IndexBuildResult>::alloc0().into_pg() }
 }
 
@@ -425,6 +428,7 @@ mod vchordrq_cached {
     pub type Tag = u64;
 
     use crate::index::storage::PostgresPage;
+    use algo::tuples::RefChecker;
     use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
     #[repr(C, align(8))]
@@ -444,7 +448,7 @@ mod vchordrq_cached {
         _0 {},
         _1 {
             mapping: Vec<u32>,
-            pages: Vec<Box<PostgresPage>>,
+            pages: Vec<Box<PostgresPage<algorithm::Opaque>>>,
         },
     }
 
@@ -469,7 +473,9 @@ mod vchordrq_cached {
                     }
                     let pages_s = buffer.len();
                     buffer.extend(pages.iter().flat_map(|x| unsafe {
-                        std::mem::transmute::<&PostgresPage, &[u8; 8192]>(x.as_ref())
+                        std::mem::transmute::<&PostgresPage<algorithm::Opaque>, &[u8; 8192]>(
+                            x.as_ref(),
+                        )
                     }));
                     let pages_e = buffer.len();
                     while buffer.len() % ALIGN != 0 {
@@ -509,11 +515,11 @@ mod vchordrq_cached {
         #[allow(dead_code)]
         header: &'a VchordrqCachedHeader1,
         mapping: &'a [u32],
-        pages: &'a [PostgresPage],
+        pages: &'a [PostgresPage<algorithm::Opaque>],
     }
 
     impl<'a> VchordrqCachedReader1<'a> {
-        pub fn get(&self, id: u32) -> Option<&'a PostgresPage> {
+        pub fn get(&self, id: u32) -> Option<&'a PostgresPage<algorithm::Opaque>> {
             let index = *self.mapping.get(id as usize)?;
             if index == u32::MAX {
                 return None;
@@ -544,50 +550,6 @@ mod vchordrq_cached {
                     })
                 }
                 _ => panic!("bad bytes"),
-            }
-        }
-    }
-
-    pub struct RefChecker<'a> {
-        bytes: &'a [u8],
-    }
-
-    impl<'a> RefChecker<'a> {
-        pub fn new(bytes: &'a [u8]) -> Self {
-            Self { bytes }
-        }
-        pub fn prefix<T: FromBytes + IntoBytes + KnownLayout + Immutable + Sized>(
-            &self,
-            s: usize,
-        ) -> &'a T {
-            let start = s;
-            let end = s + size_of::<T>();
-            let bytes = &self.bytes[start..end];
-            FromBytes::ref_from_bytes(bytes).expect("bad bytes")
-        }
-        pub fn bytes<T: FromBytes + IntoBytes + KnownLayout + Immutable + ?Sized>(
-            &self,
-            s: usize,
-            e: usize,
-        ) -> &'a T {
-            let start = s;
-            let end = e;
-            let bytes = &self.bytes[start..end];
-            FromBytes::ref_from_bytes(bytes).expect("bad bytes")
-        }
-        pub unsafe fn bytes_slice_unchecked<T>(&self, s: usize, e: usize) -> &'a [T] {
-            let start = s;
-            let end = e;
-            let bytes = &self.bytes[start..end];
-            if size_of::<T>() == 0 || bytes.len() % size_of::<T>() == 0 {
-                let ptr = bytes as *const [u8] as *const T;
-                if ptr.is_aligned() {
-                    unsafe { std::slice::from_raw_parts(ptr, bytes.len() / size_of::<T>()) }
-                } else {
-                    panic!("bad bytes")
-                }
-            } else {
-                panic!("bad bytes")
             }
         }
     }
@@ -870,7 +832,7 @@ unsafe fn parallel_build(
                 for (vector, extra) in store {
                     let key = ctid_to_key(ctid);
                     let payload = kv_to_pointer((key, extra));
-                    crate::index::algorithm::insert(opfamily, &index, payload, vector, true);
+                    crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
                 }
                 unsafe {
                     let indtuples;
@@ -893,7 +855,7 @@ unsafe fn parallel_build(
                 for (vector, extra) in store {
                     let key = ctid_to_key(ctid);
                     let payload = kv_to_pointer((key, extra));
-                    crate::index::algorithm::insert(opfamily, &index, payload, vector, true);
+                    crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
                 }
                 unsafe {
                     let indtuples;
@@ -1288,12 +1250,15 @@ impl<R: Relation> Relation for CachingRelation<'_, R> {
     type Page = R::Page;
 }
 
-impl<R: RelationRead<Page = PostgresPage>> RelationRead for CachingRelation<'_, R> {
-    type ReadGuard<'a>
-        = CachingRelationReadGuard<'a, R::ReadGuard<'a>>
-    where
-        Self: 'a;
+impl<R: RelationRead<Page = PostgresPage<algorithm::Opaque>>> RelationReadTypes
+    for CachingRelation<'_, R>
+{
+    type ReadGuard<'a> = CachingRelationReadGuard<'a, R::ReadGuard<'a>>;
+}
 
+impl<R: RelationRead<Page = PostgresPage<algorithm::Opaque>>> RelationRead
+    for CachingRelation<'_, R>
+{
     fn read(&self, id: u32) -> Self::ReadGuard<'_> {
         if let Some(x) = self.cache.get(id) {
             CachingRelationReadGuard::Cached(id, x)
@@ -1303,18 +1268,25 @@ impl<R: RelationRead<Page = PostgresPage>> RelationRead for CachingRelation<'_, 
     }
 }
 
-impl<R: RelationWrite<Page = PostgresPage>> RelationWrite for CachingRelation<'_, R> {
-    type WriteGuard<'a>
-        = R::WriteGuard<'a>
-    where
-        Self: 'a;
+impl<R: RelationWrite<Page = PostgresPage<algorithm::Opaque>>> RelationWriteTypes
+    for CachingRelation<'_, R>
+{
+    type WriteGuard<'a> = R::WriteGuard<'a>;
+}
 
+impl<R: RelationWrite<Page = PostgresPage<algorithm::Opaque>>> RelationWrite
+    for CachingRelation<'_, R>
+{
     fn write(&self, id: u32, tracking_freespace: bool) -> Self::WriteGuard<'_> {
         self.relation.write(id, tracking_freespace)
     }
 
-    fn extend(&self, tracking_freespace: bool) -> Self::WriteGuard<'_> {
-        self.relation.extend(tracking_freespace)
+    fn extend(
+        &self,
+        opaque: <Self::Page as Page>::Opaque,
+        tracking_freespace: bool,
+    ) -> Self::WriteGuard<'_> {
+        self.relation.extend(opaque, tracking_freespace)
     }
 
     fn search(&self, freespace: usize) -> Option<Self::WriteGuard<'_>> {

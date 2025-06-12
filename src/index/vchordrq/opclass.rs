@@ -24,42 +24,42 @@ use vector::VectorBorrowed;
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_vector_l2_ops() -> String {
-    "vector_l2_ops".to_string()
+    "vchordrq_vector_l2_ops".to_string()
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_vector_ip_ops() -> String {
-    "vector_ip_ops".to_string()
+    "vchordrq_vector_ip_ops".to_string()
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_vector_cosine_ops() -> String {
-    "vector_cosine_ops".to_string()
+    "vchordrq_vector_cosine_ops".to_string()
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_halfvec_l2_ops() -> String {
-    "halfvec_l2_ops".to_string()
+    "vchordrq_halfvec_l2_ops".to_string()
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_halfvec_ip_ops() -> String {
-    "halfvec_ip_ops".to_string()
+    "vchordrq_halfvec_ip_ops".to_string()
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_halfvec_cosine_ops() -> String {
-    "halfvec_cosine_ops".to_string()
+    "vchordrq_halfvec_cosine_ops".to_string()
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_vector_maxsim_ops() -> String {
-    "vector_maxsim_ops".to_string()
+    "vchordrq_vector_maxsim_ops".to_string()
 }
 
 #[pgrx::pg_extern(immutable, strict, parallel_safe)]
 fn _vchordrq_support_halfvec_maxsim_ops() -> String {
-    "halfvec_maxsim_ops".to_string()
+    "vchordrq_halfvec_maxsim_ops".to_string()
 }
 
 pub struct Sphere<T> {
@@ -259,14 +259,14 @@ pub unsafe fn opfamily(index_relation: pgrx::pg_sys::Relation) -> Opfamily {
     let result_string = result_option.expect("null return value");
 
     let result = match result_string.as_str() {
-        "vector_l2_ops" => Opfamily::VectorL2,
-        "vector_ip_ops" => Opfamily::VectorIp,
-        "vector_cosine_ops" => Opfamily::VectorCosine,
-        "halfvec_l2_ops" => Opfamily::HalfvecL2,
-        "halfvec_ip_ops" => Opfamily::HalfvecIp,
-        "halfvec_cosine_ops" => Opfamily::HalfvecCosine,
-        "vector_maxsim_ops" => Opfamily::VectorMaxsim,
-        "halfvec_maxsim_ops" => Opfamily::HalfvecMaxsim,
+        "vchordrq_vector_l2_ops" => Opfamily::VectorL2,
+        "vchordrq_vector_ip_ops" => Opfamily::VectorIp,
+        "vchordrq_vector_cosine_ops" => Opfamily::VectorCosine,
+        "vchordrq_halfvec_l2_ops" => Opfamily::HalfvecL2,
+        "vchordrq_halfvec_ip_ops" => Opfamily::HalfvecIp,
+        "vchordrq_halfvec_cosine_ops" => Opfamily::HalfvecCosine,
+        "vchordrq_vector_maxsim_ops" => Opfamily::VectorMaxsim,
+        "vchordrq_halfvec_maxsim_ops" => Opfamily::HalfvecMaxsim,
         _ => pgrx::error!("unknown operator class"),
     };
 

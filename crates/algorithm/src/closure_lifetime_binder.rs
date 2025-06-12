@@ -40,19 +40,20 @@ where
 }
 
 #[inline(always)]
-pub fn id_3<F, T, A: ?Sized>(f: F) -> F
+pub fn id_3<F, T, A: ?Sized, B: ?Sized>(f: F) -> F
 where
-    T: crate::RelationWrite,
-    F: for<'a> Fn(&'a T, A) -> T::WriteGuard<'a>,
+    T: algo::RelationWrite,
+    F: for<'a> Fn(&'a T, A, B) -> T::WriteGuard<'a>,
 {
     f
 }
 
 #[inline(always)]
-pub fn id_4<F, T, A: ?Sized, B: ?Sized, R: ?Sized>(f: F) -> F
+pub fn id_4<'r, F, P, A, B, R: ?Sized>(f: F) -> F
 where
-    T: crate::RelationRead,
-    F: FnMut(A, Vec<T::ReadGuard<'_>>, B) -> R,
+    P: algo::prefetcher::Prefetcher<'r>,
+    <P as IntoIterator>::Item: algo::Fetch,
+    F: FnMut(A, P::Guards, B) -> R,
 {
     f
 }

@@ -12,202 +12,25 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-use super::opclass::Opfamily;
-use crate::index::am::am_build::InternalBuild;
+use crate::index::allocator::BumpAlloc;
+use crate::index::vchordrq::am::am_build::InternalBuild;
+use crate::index::vchordrq::opclass::Opfamily;
+use algo::prefetcher::*;
+use algo::*;
 use algorithm::operator::{Dot, L2, Op};
 use algorithm::types::*;
-use algorithm::{
-    Bump, FastHeap, Fetch, Hints, PlainPrefetcher, PrefetcherHeapFamily, PrefetcherSequenceFamily,
-    RelationPrefetch, RelationRead, RelationReadStream, RelationWrite, Sequence, SimplePrefetcher,
-    StreamPrefetcher,
-};
+use algorithm::{FastHeap, Opaque};
 use half::f16;
-use std::cell::UnsafeCell;
 use std::collections::BinaryHeap;
-use std::mem::MaybeUninit;
 use std::num::NonZero;
 use vector::VectorOwned;
 use vector::vect::{VectBorrowed, VectOwned};
 
-#[repr(C, align(4096))]
-struct Chunk([u8; 2 * 1024 * 1024]);
-
-struct Allocator {
-    used: Vec<*mut MaybeUninit<Chunk>>,
-    free: Vec<*mut MaybeUninit<Chunk>>,
-    this: *mut MaybeUninit<u8>,
-    size: usize,
-}
-
-impl Allocator {
-    pub fn new() -> Self {
-        Self {
-            used: Vec::new(),
-            free: Vec::new(),
-            this: Box::into_raw(Box::<Chunk>::new_uninit()).cast(),
-            size: size_of::<Chunk>(),
-        }
-    }
-    pub fn malloc<T>(&mut self) -> *mut T {
-        const {
-            assert!(align_of::<T>() <= align_of::<Chunk>());
-            assert!(size_of::<T>() <= size_of::<Chunk>());
-        }
-        if size_of::<T>() <= self.size {
-            self.size = (self.size - size_of::<T>()) / align_of::<T>() * align_of::<T>();
-            unsafe { self.this.add(self.size).cast::<T>() }
-        } else {
-            #[cold]
-            fn cold<T>(sel: &mut Allocator) -> *mut T {
-                abort_unwind(|| {
-                    let raw = std::mem::replace(&mut sel.this, std::ptr::null_mut());
-                    sel.used.push(raw.cast());
-                    sel.this = sel
-                        .free
-                        .pop()
-                        .unwrap_or_else(|| Box::into_raw(Box::<Chunk>::new_uninit()))
-                        .cast();
-                    sel.size = size_of::<Chunk>();
-                });
-                sel.size = (sel.size - size_of::<T>()) / align_of::<T>() * align_of::<T>();
-                unsafe { sel.this.add(sel.size).cast::<T>() }
-            }
-            cold(self)
-        }
-    }
-    pub fn malloc_n<T>(&mut self, n: usize) -> *mut T {
-        const {
-            assert!(align_of::<T>() <= align_of::<Chunk>());
-        }
-        let limit = const {
-            if size_of::<T>() > 0 {
-                size_of::<Chunk>() / size_of::<T>()
-            } else {
-                usize::MAX
-            }
-        };
-        if n <= limit && n * size_of::<T>() <= self.size {
-            self.size = (self.size - n * size_of::<T>()) / align_of::<T>() * align_of::<T>();
-            unsafe { self.this.add(self.size).cast::<T>() }
-        } else {
-            #[cold]
-            fn cold<T>(sel: &mut Allocator, n: usize) -> *mut T {
-                abort_unwind(|| {
-                    let raw = std::mem::replace(&mut sel.this, std::ptr::null_mut());
-                    sel.used.push(raw.cast());
-                    sel.this = sel
-                        .free
-                        .pop()
-                        .unwrap_or_else(|| Box::into_raw(Box::<Chunk>::new_uninit()))
-                        .cast();
-                    sel.size = size_of::<Chunk>();
-                });
-                sel.size = (sel.size - n * size_of::<T>()) / align_of::<T>() * align_of::<T>();
-                unsafe { sel.this.add(sel.size).cast::<T>() }
-            }
-            if n > limit {
-                panic!("failed to allocate memory");
-            }
-            cold(self, n)
-        }
-    }
-    pub fn reset(&mut self) {
-        abort_unwind(|| {
-            self.free.extend(std::mem::take(&mut self.used));
-            self.size = size_of::<Chunk>();
-        });
-    }
-}
-
-impl Drop for Allocator {
-    fn drop(&mut self) {
-        for raw in self.used.iter().copied() {
-            unsafe {
-                let _ = Box::<MaybeUninit<Chunk>>::from_raw(raw);
-            }
-        }
-        for raw in self.free.iter().copied() {
-            unsafe {
-                let _ = Box::<MaybeUninit<Chunk>>::from_raw(raw);
-            }
-        }
-        unsafe {
-            let _ = Box::<MaybeUninit<Chunk>>::from_raw(self.this.cast());
-        }
-    }
-}
-
-#[test]
-fn test_allocator() {
-    let mut allocator = Allocator::new();
-    for _ in 0..1024 * 8 {
-        allocator.malloc::<()>();
-        allocator.malloc::<u8>();
-        allocator.malloc::<u32>();
-        allocator.malloc::<u8>();
-        allocator.malloc::<[u8; 32]>();
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc::<[u8; 32]>();
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc_n::<u32>(2);
-    }
-    let number_of_chunks_0 = 1 + allocator.used.len() + allocator.free.len();
-    allocator.reset();
-    for _ in 0..1024 * 8 {
-        allocator.malloc::<()>();
-        allocator.malloc::<u8>();
-        allocator.malloc::<u32>();
-        allocator.malloc::<u8>();
-        allocator.malloc::<[u8; 32]>();
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc::<[u8; 32]>();
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc_n::<u32>(2);
-        allocator.malloc_n::<u32>(2);
-    }
-    let number_of_chunks_1 = 1 + allocator.used.len() + allocator.free.len();
-    assert_eq!(number_of_chunks_0, number_of_chunks_1);
-}
-
-pub struct BumpAlloc {
-    inner: UnsafeCell<Allocator>,
-}
-
-impl BumpAlloc {
-    pub fn new() -> Self {
-        Self {
-            inner: UnsafeCell::new(Allocator::new()),
-        }
-    }
-    pub fn reset(&mut self) {
-        self.inner.get_mut().reset();
-    }
-}
-
-impl Bump for BumpAlloc {
-    fn alloc<T>(&self, value: T) -> &mut T {
-        unsafe {
-            let ptr = (*self.inner.get()).malloc::<T>();
-            ptr.write(value);
-            &mut *ptr
-        }
-    }
-
-    fn alloc_slice<T: Copy>(&self, slice: &[T]) -> &mut [T] {
-        unsafe {
-            let ptr = (*self.inner.get()).malloc_n::<T>(slice.len());
-            std::ptr::copy_nonoverlapping(slice.as_ptr(), ptr, slice.len());
-            std::slice::from_raw_parts_mut(ptr, slice.len())
-        }
-    }
-}
-
-pub fn prewarm(opfamily: Opfamily, index: &impl RelationRead, height: i32) -> String {
+pub fn prewarm<R>(opfamily: Opfamily, index: &R, height: i32) -> String
+where
+    R: RelationRead,
+    R::Page: Page<Opaque = Opaque>,
+{
     let bump = BumpAlloc::new();
     let make_h0_plain_prefetcher = MakeH0PlainPrefetcher { index };
     match (opfamily.vector_kind(), opfamily.distance_kind()) {
@@ -242,12 +65,15 @@ pub fn prewarm(opfamily: Opfamily, index: &impl RelationRead, height: i32) -> St
     }
 }
 
-pub fn bulkdelete(
+pub fn bulkdelete<R>(
     opfamily: Opfamily,
-    index: &(impl RelationRead + RelationWrite),
+    index: &R,
     check: impl Fn(),
     callback: impl Fn(NonZero<u64>) -> bool,
-) {
+) where
+    R: RelationRead + RelationWrite,
+    R::Page: Page<Opaque = Opaque>,
+{
     match (opfamily.vector_kind(), opfamily.distance_kind()) {
         (VectorKind::Vecf32, DistanceKind::L2) => {
             algorithm::bulkdelete::<_, Op<VectOwned<f32>, L2>>(index, &check, &callback);
@@ -268,7 +94,11 @@ pub fn bulkdelete(
     }
 }
 
-pub fn maintain(opfamily: Opfamily, index: &(impl RelationRead + RelationWrite), check: impl Fn()) {
+pub fn maintain<R>(opfamily: Opfamily, index: &R, check: impl Fn())
+where
+    R: RelationRead + RelationWrite,
+    R::Page: Page<Opaque = Opaque>,
+{
     let make_h0_plain_prefetcher = MakeH0PlainPrefetcher { index };
     let maintain = match (opfamily.vector_kind(), opfamily.distance_kind()) {
         (VectorKind::Vecf32, DistanceKind::L2) => {
@@ -306,12 +136,15 @@ pub fn maintain(opfamily: Opfamily, index: &(impl RelationRead + RelationWrite),
     );
 }
 
-pub fn build(
+pub fn build<R>(
     vector_options: VectorOptions,
     vchordrq_options: VchordrqIndexOptions,
-    index: &impl RelationWrite,
+    index: &R,
     structures: Vec<Structure<Vec<f32>>>,
-) {
+) where
+    R: RelationRead + RelationWrite,
+    R::Page: Page<Opaque = Opaque>,
+{
     match (vector_options.v, vector_options.d) {
         (VectorKind::Vecf32, DistanceKind::L2) => algorithm::build::<_, Op<VectOwned<f32>, L2>>(
             vector_options,
@@ -340,13 +173,16 @@ pub fn build(
     }
 }
 
-pub fn insert(
+pub fn insert<R>(
     opfamily: Opfamily,
-    index: &(impl RelationRead + RelationWrite),
+    index: &R,
     payload: NonZero<u64>,
     vector: OwnedVector,
     skip_freespaces: bool,
-) {
+) where
+    R: RelationRead + RelationWrite,
+    R::Page: Page<Opaque = Opaque>,
+{
     let bump = BumpAlloc::new();
     let make_h1_plain_prefetcher = MakeH1PlainPrefetcherForInsertion { index };
     match (vector, opfamily.distance_kind()) {
@@ -461,14 +297,6 @@ impl RandomProject for VectBorrowed<'_, f16> {
         let input = f16::vector_to_f32(self.slice());
         VectOwned::new(f16::vector_from_f32(&rotate(&input)))
     }
-}
-
-// Emulate unstable library feature `abort_unwind`.
-// See https://github.com/rust-lang/rust/issues/130338.
-
-#[inline(never)]
-extern "C" fn abort_unwind<F: FnOnce() -> R, R>(f: F) -> R {
-    f()
 }
 
 #[derive(Debug)]
@@ -588,7 +416,9 @@ impl<'r, R> Clone for MakeH0StreamPrefetcher<'r, R> {
     }
 }
 
-impl<'r, R: RelationReadStream> PrefetcherSequenceFamily<'r, R> for MakeH0StreamPrefetcher<'r, R> {
+impl<'r, R: RelationRead + RelationReadStream> PrefetcherSequenceFamily<'r, R>
+    for MakeH0StreamPrefetcher<'r, R>
+{
     type P<S: Sequence>
         = StreamPrefetcher<'r, R, S>
     where

@@ -12,7 +12,10 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-use crate::*;
+use crate::{
+    Fetch, Hints, ReadStream, RelationPrefetch, RelationRead, RelationReadStream,
+    RelationReadTypes, Sequence,
+};
 use std::collections::{VecDeque, vec_deque};
 use std::iter::Chain;
 
@@ -24,14 +27,15 @@ where
     Self::Item: Fetch,
 {
     type R: RelationRead + 'r;
+    type Guards: Iterator<Item = <Self::R as RelationReadTypes>::ReadGuard<'r>>;
 
     #[must_use]
-    fn next(&mut self) -> Option<(Self::Item, Vec<<Self::R as RelationRead>::ReadGuard<'r>>)>;
+    fn next(&mut self) -> Option<(Self::Item, Self::Guards)>;
     #[must_use]
     fn next_if(
         &mut self,
         predicate: impl FnOnce(&Self::Item) -> bool,
-    ) -> Option<(Self::Item, Vec<<Self::R as RelationRead>::ReadGuard<'r>>)>;
+    ) -> Option<(Self::Item, Self::Guards)>;
 }
 
 pub struct PlainPrefetcher<'r, R, S: Sequence> {
@@ -60,22 +64,50 @@ where
     S::Item: Fetch,
 {
     type R = R;
+    type Guards = PlainPrefetcherGuards<'r, R>;
 
-    fn next(&mut self) -> Option<(Self::Item, Vec<<Self::R as RelationRead>::ReadGuard<'r>>)> {
+    fn next(&mut self) -> Option<(Self::Item, PlainPrefetcherGuards<'r, R>)> {
         let e = self.sequence.next()?;
-        let list = e.fetch().iter().map(|&id| self.relation.read(id)).collect();
-        Some((e, list))
+        let list = e.fetch().into_iter();
+        Some((
+            e,
+            PlainPrefetcherGuards {
+                relation: self.relation,
+                list,
+            },
+        ))
     }
+
     fn next_if(
         &mut self,
         predicate: impl FnOnce(&Self::Item) -> bool,
-    ) -> Option<(S::Item, Vec<R::ReadGuard<'r>>)> {
+    ) -> Option<(S::Item, PlainPrefetcherGuards<'r, R>)> {
         if !predicate(self.sequence.peek()?) {
             return None;
         }
         let e = self.sequence.next()?;
-        let list = e.fetch().iter().map(|&id| self.relation.read(id)).collect();
-        Some((e, list))
+        let list = e.fetch().into_iter();
+        Some((
+            e,
+            PlainPrefetcherGuards {
+                relation: self.relation,
+                list,
+            },
+        ))
+    }
+}
+
+pub struct PlainPrefetcherGuards<'r, R> {
+    relation: &'r R,
+    list: std::vec::IntoIter<u32>,
+}
+
+impl<'r, R: RelationRead> Iterator for PlainPrefetcherGuards<'r, R> {
+    type Item = R::ReadGuard<'r>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let id = self.list.next()?;
+        Some(self.relation.read(id))
     }
 }
 
@@ -111,35 +143,62 @@ where
     S::Item: Fetch,
 {
     type R = R;
+    type Guards = SimplePrefetcherGuards<'r, R>;
 
-    fn next(&mut self) -> Option<(Self::Item, Vec<<Self::R as RelationRead>::ReadGuard<'r>>)> {
+    fn next(&mut self) -> Option<(Self::Item, SimplePrefetcherGuards<'r, R>)> {
         while self.window.len() < WINDOW_SIZE
             && let Some(e) = self.sequence.next()
         {
-            for id in e.fetch().iter().copied() {
+            for id in e.fetch().into_iter() {
                 self.relation.prefetch(id);
             }
             self.window.push_back(e);
         }
         let e = self.window.pop_front()?;
-        let list = e.fetch().iter().map(|&id| self.relation.read(id)).collect();
-        Some((e, list))
+        let list = e.fetch().into_iter();
+        Some((
+            e,
+            SimplePrefetcherGuards {
+                relation: self.relation,
+                list,
+            },
+        ))
     }
     fn next_if(
         &mut self,
         predicate: impl FnOnce(&S::Item) -> bool,
-    ) -> Option<(S::Item, Vec<R::ReadGuard<'r>>)> {
+    ) -> Option<(S::Item, SimplePrefetcherGuards<'r, R>)> {
         while self.window.len() < WINDOW_SIZE
             && let Some(e) = self.sequence.next()
         {
-            for id in e.fetch().iter().copied() {
+            for id in e.fetch().into_iter() {
                 self.relation.prefetch(id);
             }
             self.window.push_back(e);
         }
         let e = vec_deque_pop_front_if(&mut self.window, predicate)?;
-        let list = e.fetch().iter().map(|&id| self.relation.read(id)).collect();
-        Some((e, list))
+        let list = e.fetch().into_iter();
+        Some((
+            e,
+            SimplePrefetcherGuards {
+                relation: self.relation,
+                list,
+            },
+        ))
+    }
+}
+
+pub struct SimplePrefetcherGuards<'r, R> {
+    relation: &'r R,
+    list: std::vec::IntoIter<u32>,
+}
+
+impl<'r, R: RelationRead> Iterator for SimplePrefetcherGuards<'r, R> {
+    type Item = R::ReadGuard<'r>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let id = self.list.next()?;
+        Some(self.relation.read(id))
     }
 }
 
@@ -182,18 +241,20 @@ where
     }
 }
 
-impl<'r, R: RelationReadStream, S: Sequence> Prefetcher<'r> for StreamPrefetcher<'r, R, S>
+impl<'r, R: RelationRead + RelationReadStream, S: Sequence> Prefetcher<'r>
+    for StreamPrefetcher<'r, R, S>
 where
     S::Item: Fetch,
 {
     type R = R;
-    fn next(&mut self) -> Option<(S::Item, Vec<R::ReadGuard<'r>>)> {
+    type Guards = <R::ReadStream<'r, StreamPrefetcherSequence<S>> as ReadStream<'r>>::Guards;
+    fn next(&mut self) -> Option<(S::Item, Self::Guards)> {
         self.stream.next()
     }
     fn next_if(
         &mut self,
         predicate: impl FnOnce(&Self::Item) -> bool,
-    ) -> Option<(S::Item, Vec<R::ReadGuard<'r>>)> {
+    ) -> Option<(S::Item, Self::Guards)> {
         self.stream.next_if(predicate)
     }
 }
