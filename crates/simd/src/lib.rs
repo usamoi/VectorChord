@@ -57,6 +57,7 @@ pub trait Floating:
     fn vector_mul(lhs: &[Self], rhs: &[Self]) -> Vec<Self>;
     fn vector_mul_scalar(lhs: &[Self], rhs: f32) -> Vec<Self>;
     fn vector_mul_scalar_inplace(lhs: &mut [Self], rhs: f32);
+    fn vector_abs_inplace(this: &mut [Self]);
 }
 
 mod internal {

@@ -41,7 +41,7 @@ unsafe extern "C-unwind" fn rewrite_plan_state(
             let node = node as *mut pgrx::pg_sys::IndexScanState;
             let index_relation = (*node).iss_RelationDesc;
             if Some(true) == dirty_check(index_relation) && (*node).iss_ScanDesc.is_null() {
-                use crate::index::am::Scanner;
+                use crate::index::vchordrq::am::Scanner;
 
                 (*node).iss_ScanDesc = pgrx::pg_sys::index_beginscan(
                     (*node).ss.ss_currentRelation,

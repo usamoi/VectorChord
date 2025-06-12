@@ -1,0 +1,18 @@
+[package]
+name = "rabitq8"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+distance = { path = "../distance" }
+simd = { path = "../simd" }
+
+zerocopy.workspace = true
+
+[build-dependencies]
+rand = "0.9.1"
+rand_chacha = "0.9.0"
+
+[lints]
+workspace = true

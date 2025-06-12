@@ -14,14 +14,15 @@
 
 pub mod am_build;
 
-use super::algorithm::BumpAlloc;
-use crate::index::gucs;
-use crate::index::opclass::{Opfamily, opfamily};
-use crate::index::scanners::*;
+use crate::index::allocator::BumpAlloc;
+use crate::index::fetcher::*;
 use crate::index::storage::PostgresRelation;
-use algorithm::Bump;
+use crate::index::vamana::gucs;
+use crate::index::vamana::opclass::opfamily;
+use crate::index::vamana::scanners::*;
+use algo::Bump;
 use pgrx::datum::Internal;
-use pgrx::pg_sys::{BlockIdData, Datum, ItemPointerData};
+use pgrx::pg_sys::Datum;
 use std::cell::LazyCell;
 use std::ffi::CStr;
 use std::num::NonZero;
@@ -73,7 +74,7 @@ pub fn init() {
 }
 
 #[pgrx::pg_extern(sql = "")]
-fn _vchordrq_amhandler(_fcinfo: pgrx::pg_sys::FunctionCallInfo) -> Internal {
+fn _vamana_amhandler(_fcinfo: pgrx::pg_sys::FunctionCallInfo) -> Internal {
     type T = pgrx::pg_sys::IndexAmRoutine;
     unsafe {
         let index_am_routine = pgrx::pg_sys::palloc0(size_of::<T>()) as *mut T;
@@ -150,8 +151,8 @@ pub unsafe extern "C-unwind" fn amoptions(
 #[allow(clippy::too_many_arguments)]
 #[pgrx::pg_guard]
 pub unsafe extern "C-unwind" fn amcostestimate(
-    root: *mut pgrx::pg_sys::PlannerInfo,
-    path: *mut pgrx::pg_sys::IndexPath,
+    _root: *mut pgrx::pg_sys::PlannerInfo,
+    _path: *mut pgrx::pg_sys::IndexPath,
     _loop_count: f64,
     index_startup_cost: *mut pgrx::pg_sys::Cost,
     index_total_cost: *mut pgrx::pg_sys::Cost,
@@ -160,97 +161,9 @@ pub unsafe extern "C-unwind" fn amcostestimate(
     index_pages: *mut f64,
 ) {
     unsafe {
-        use pgrx::pg_sys::disable_cost;
-        let index_opt_info = (*path).indexinfo;
-        // do not use index, if there are no orderbys or clauses
-        if (*path).indexorderbys.is_null() && (*path).indexclauses.is_null() {
-            *index_startup_cost = disable_cost;
-            *index_total_cost = disable_cost;
-            *index_selectivity = 0.0;
-            *index_correlation = 0.0;
-            *index_pages = 1.0;
-            return;
-        }
-        let selectivity = {
-            use pgrx::pg_sys::{
-                JoinType, add_predicate_to_index_quals, clauselist_selectivity,
-                get_quals_from_indexclauses,
-            };
-            let index_quals = get_quals_from_indexclauses((*path).indexclauses);
-            let selectivity_quals = add_predicate_to_index_quals(index_opt_info, index_quals);
-            clauselist_selectivity(
-                root,
-                selectivity_quals,
-                (*(*index_opt_info).rel).relid as _,
-                JoinType::JOIN_INNER,
-                std::ptr::null_mut(),
-            )
-        };
-        // index exists
-        if !(*index_opt_info).hypothetical {
-            let relation = Index::open((*index_opt_info).indexoid, pgrx::pg_sys::NoLock as _);
-            let opfamily = opfamily(relation.raw());
-            if !matches!(
-                opfamily,
-                Opfamily::HalfvecCosine
-                    | Opfamily::HalfvecIp
-                    | Opfamily::HalfvecL2
-                    | Opfamily::VectorCosine
-                    | Opfamily::VectorIp
-                    | Opfamily::VectorL2
-            ) {
-                *index_startup_cost = 0.0;
-                *index_total_cost = 0.0;
-                *index_selectivity = 1.0;
-                *index_correlation = 0.0;
-                *index_pages = 1.0;
-                return;
-            }
-            let index = PostgresRelation::new(relation.raw());
-            let probes = gucs::probes();
-            let cost = algorithm::cost(&index);
-            if cost.cells.len() != 1 + probes.len() {
-                panic!(
-                    "need {} probes, but {} probes provided",
-                    cost.cells.len() - 1,
-                    probes.len()
-                );
-            }
-            let node_count = {
-                let tuples = (*index_opt_info).tuples as u32;
-                let mut count = 0.0;
-                let r = cost.cells.iter().copied().rev();
-                let numerator = std::iter::once(1).chain(probes.clone());
-                let denumerator = r.clone();
-                let scale = r.skip(1).chain(std::iter::once(tuples));
-                for (scale, (numerator, denumerator)) in scale.zip(numerator.zip(denumerator)) {
-                    count += (scale as f64) * ((numerator as f64) / (denumerator as f64));
-                }
-                count
-            };
-            let page_count = {
-                let mut pages = 0_f64;
-                pages += 1.0;
-                pages += node_count * cost.dims as f64 / 60000.0;
-                pages += probes.iter().sum::<u32>() as f64 * {
-                    let x = opfamily.vector_kind().element_size() * cost.dims;
-                    x.div_ceil(3840 * x.div_ceil(5120).min(2)) as f64
-                };
-                pages += cost.cells[0] as f64;
-                pages
-            };
-            let next_count =
-                f64::max(1.0, (*root).limit_tuples) * f64::min(1000.0, 1.0 / selectivity);
-            *index_startup_cost = 0.001 * node_count;
-            *index_total_cost = 0.001 * node_count + next_count;
-            *index_selectivity = selectivity;
-            *index_correlation = 0.0;
-            *index_pages = page_count;
-            return;
-        }
         *index_startup_cost = 0.0;
         *index_total_cost = 0.0;
-        *index_selectivity = selectivity;
+        *index_selectivity = 1.0;
         *index_correlation = 0.0;
         *index_pages = 1.0;
     }
@@ -264,11 +177,11 @@ pub unsafe extern "C-unwind" fn aminsert(
     values: *mut Datum,
     is_null: *mut bool,
     heap_tid: pgrx::pg_sys::ItemPointer,
-    _heap_relation: pgrx::pg_sys::Relation,
+    heap_relation: pgrx::pg_sys::Relation,
     _check_unique: pgrx::pg_sys::IndexUniqueCheck::Type,
     _index_info: *mut pgrx::pg_sys::IndexInfo,
 ) -> bool {
-    unsafe { aminsertinner(index_relation, values, is_null, heap_tid) }
+    unsafe { aminsertinner(index_relation, heap_relation, values, is_null, heap_tid) }
 }
 
 #[cfg(any(feature = "pg14", feature = "pg15", feature = "pg16", feature = "pg17"))]
@@ -279,16 +192,17 @@ pub unsafe extern "C-unwind" fn aminsert(
     values: *mut Datum,
     is_null: *mut bool,
     heap_tid: pgrx::pg_sys::ItemPointer,
-    _heap_relation: pgrx::pg_sys::Relation,
+    heap_relation: pgrx::pg_sys::Relation,
     _check_unique: pgrx::pg_sys::IndexUniqueCheck::Type,
     _index_unchanged: bool,
     _index_info: *mut pgrx::pg_sys::IndexInfo,
 ) -> bool {
-    unsafe { aminsertinner(index_relation, values, is_null, heap_tid) }
+    unsafe { aminsertinner(index_relation, heap_relation, values, is_null, heap_tid) }
 }
 
 unsafe fn aminsertinner(
     index_relation: pgrx::pg_sys::Relation,
+    _heap_relation: pgrx::pg_sys::Relation,
     values: *mut Datum,
     is_null: *mut bool,
     ctid: pgrx::pg_sys::ItemPointer,
@@ -301,7 +215,7 @@ unsafe fn aminsertinner(
         for (vector, extra) in store {
             let key = ctid_to_key(ctid);
             let payload = kv_to_pointer((key, extra));
-            crate::index::algorithm::insert(opfamily, &index, payload, vector, false);
+            crate::index::vamana::algo::insert(opfamily, &index, payload, vector);
         }
     }
     false
@@ -331,13 +245,13 @@ pub unsafe extern "C-unwind" fn ambulkdelete(
         let mut ctid = key_to_ctid(key);
         unsafe { callback(&mut ctid, callback_state) }
     };
-    crate::index::algorithm::bulkdelete(opfamily, &index, check, callback);
+    crate::index::vamana::algo::bulkdelete(opfamily, &index, check, callback);
     stats
 }
 
 #[pgrx::pg_guard]
 pub unsafe extern "C-unwind" fn amvacuumcleanup(
-    info: *mut pgrx::pg_sys::IndexVacuumInfo,
+    _info: *mut pgrx::pg_sys::IndexVacuumInfo,
     stats: *mut pgrx::pg_sys::IndexBulkDeleteResult,
 ) -> *mut pgrx::pg_sys::IndexBulkDeleteResult {
     let mut stats = stats;
@@ -346,12 +260,6 @@ pub unsafe extern "C-unwind" fn amvacuumcleanup(
             pgrx::pg_sys::palloc0(size_of::<pgrx::pg_sys::IndexBulkDeleteResult>()).cast()
         };
     }
-    let opfamily = unsafe { opfamily((*info).index) };
-    let index = unsafe { PostgresRelation::new((*info).index) };
-    let check = || unsafe {
-        pgrx::pg_sys::vacuum_delay_point();
-    };
-    crate::index::algorithm::maintain(opfamily, &index, check);
     stats
 }
 
@@ -384,7 +292,7 @@ pub unsafe extern "C-unwind" fn amrescan(
     _n_orderbys: std::os::raw::c_int,
 ) {
     unsafe {
-        use crate::index::opclass::Opfamily;
+        use crate::index::vamana::opclass::Opfamily;
         if !keys.is_null() && (*scan).numberOfKeys > 0 {
             std::ptr::copy(keys, (*scan).keyData, (*scan).numberOfKeys as _);
         }
@@ -403,13 +311,8 @@ pub unsafe extern "C-unwind" fn amrescan(
         let index = PostgresRelation::new((*scan).indexRelation);
         let options = SearchOptions {
             epsilon: gucs::epsilon(),
-            probes: gucs::probes(),
+            ef_search: gucs::ef_search(),
             max_scan_tuples: gucs::max_scan_tuples(),
-            maxsim_refine: gucs::maxsim_refine(),
-            maxsim_threshold: gucs::maxsim_threshold(),
-            io_search: gucs::io_search(),
-            io_rerank: gucs::io_rerank(),
-            prefilter: gucs::prefilter(),
         };
         let fetcher = {
             let hack = scanner.hack;
@@ -436,26 +339,6 @@ pub unsafe extern "C-unwind" fn amrescan(
             | Opfamily::HalfvecIp
             | Opfamily::HalfvecCosine => {
                 let mut builder = DefaultBuilder::new(opfamily);
-                for i in 0..(*scan).numberOfOrderBys {
-                    let data = (*scan).orderByData.add(i as usize);
-                    let value = (*data).sk_argument;
-                    let is_null = ((*data).sk_flags & pgrx::pg_sys::SK_ISNULL as i32) != 0;
-                    builder.add((*data).sk_strategy, (!is_null).then_some(value));
-                }
-                for i in 0..(*scan).numberOfKeys {
-                    let data = (*scan).keyData.add(i as usize);
-                    let value = (*data).sk_argument;
-                    let is_null = ((*data).sk_flags & pgrx::pg_sys::SK_ISNULL as i32) != 0;
-                    builder.add((*data).sk_strategy, (!is_null).then_some(value));
-                }
-                LazyCell::new(Box::new(move || {
-                    // only do this since `PostgresRelation` has no destructor
-                    let index = bump.alloc(index.clone());
-                    builder.build(index, options, fetcher, bump)
-                }))
-            }
-            Opfamily::VectorMaxsim | Opfamily::HalfvecMaxsim => {
-                let mut builder = MaxsimBuilder::new(opfamily);
                 for i in 0..(*scan).numberOfOrderBys {
                     let data = (*scan).orderByData.add(i as usize);
                     let value = (*data).sk_argument;
@@ -520,178 +403,4 @@ pub struct Scanner {
     pub hack: Option<NonNull<pgrx::pg_sys::IndexScanState>>,
     scanning: LazyCell<Iter, Box<dyn FnOnce() -> Iter>>,
     bump: Box<BumpAlloc>,
-}
-
-struct HeapFetcher {
-    index_info: *mut pgrx::pg_sys::IndexInfo,
-    estate: *mut pgrx::pg_sys::EState,
-    econtext: *mut pgrx::pg_sys::ExprContext,
-    heap_relation: pgrx::pg_sys::Relation,
-    snapshot: pgrx::pg_sys::Snapshot,
-    slot: *mut pgrx::pg_sys::TupleTableSlot,
-    values: [Datum; 32],
-    is_nulls: [bool; 32],
-    hack: *mut pgrx::pg_sys::IndexScanState,
-}
-
-impl HeapFetcher {
-    unsafe fn new(
-        index_relation: pgrx::pg_sys::Relation,
-        heap_relation: pgrx::pg_sys::Relation,
-        snapshot: pgrx::pg_sys::Snapshot,
-        hack: *mut pgrx::pg_sys::IndexScanState,
-    ) -> Self {
-        unsafe {
-            let index_info = pgrx::pg_sys::BuildIndexInfo(index_relation);
-            let estate = pgrx::pg_sys::CreateExecutorState();
-            let econtext = pgrx::pg_sys::MakePerTupleExprContext(estate);
-            Self {
-                index_info,
-                estate,
-                econtext,
-                heap_relation,
-                snapshot,
-                slot: pgrx::pg_sys::table_slot_create(heap_relation, std::ptr::null_mut()),
-                values: [Datum::null(); 32],
-                is_nulls: [true; 32],
-                hack,
-            }
-        }
-    }
-}
-
-impl Drop for HeapFetcher {
-    fn drop(&mut self) {
-        unsafe {
-            pgrx::pg_sys::MemoryContextReset((*self.econtext).ecxt_per_tuple_memory);
-            // free common resources
-            pgrx::pg_sys::ExecDropSingleTupleTableSlot(self.slot);
-            pgrx::pg_sys::FreeExecutorState(self.estate);
-        }
-    }
-}
-
-impl Fetcher for HeapFetcher {
-    type Tuple<'a> = HeapTuple<'a>;
-
-    fn fetch(&mut self, key: [u16; 3]) -> Option<Self::Tuple<'_>> {
-        unsafe {
-            let mut ctid = key_to_ctid(key);
-            let table_am = (*self.heap_relation).rd_tableam;
-            let fetch_row_version = (*table_am)
-                .tuple_fetch_row_version
-                .expect("unsupported heap access method");
-            if !fetch_row_version(self.heap_relation, &mut ctid, self.snapshot, self.slot) {
-                return None;
-            }
-            Some(HeapTuple { this: self })
-        }
-    }
-}
-
-pub struct HeapTuple<'a> {
-    this: &'a mut HeapFetcher,
-}
-
-impl Tuple for HeapTuple<'_> {
-    fn build(&mut self) -> (&[Datum; 32], &[bool; 32]) {
-        unsafe {
-            let this = &mut self.this;
-            (*this.econtext).ecxt_scantuple = this.slot;
-            pgrx::pg_sys::MemoryContextReset((*this.econtext).ecxt_per_tuple_memory);
-            pgrx::pg_sys::FormIndexDatum(
-                this.index_info,
-                this.slot,
-                this.estate,
-                this.values.as_mut_ptr(),
-                this.is_nulls.as_mut_ptr(),
-            );
-            (&this.values, &this.is_nulls)
-        }
-    }
-
-    #[allow(clippy::collapsible_if)]
-    fn filter(&mut self) -> bool {
-        unsafe {
-            let this = &mut self.this;
-            if !this.hack.is_null() {
-                if let Some(qual) = NonNull::new((*this.hack).ss.ps.qual) {
-                    use pgrx::datum::FromDatum;
-                    use pgrx::memcxt::PgMemoryContexts;
-                    assert!(qual.as_ref().flags & pgrx::pg_sys::EEO_FLAG_IS_QUAL as u8 != 0);
-                    let evalfunc = qual.as_ref().evalfunc.expect("no evalfunc for qual");
-                    if !(*this.hack).ss.ps.ps_ExprContext.is_null() {
-                        let econtext = (*this.hack).ss.ps.ps_ExprContext;
-                        (*econtext).ecxt_scantuple = this.slot;
-                        pgrx::pg_sys::MemoryContextReset((*econtext).ecxt_per_tuple_memory);
-                        let result = PgMemoryContexts::For((*econtext).ecxt_per_tuple_memory)
-                            .switch_to(|_| {
-                                let mut is_null = true;
-                                let datum = evalfunc(qual.as_ptr(), econtext, &mut is_null);
-                                bool::from_datum(datum, is_null)
-                            });
-                        if result != Some(true) {
-                            return false;
-                        }
-                    }
-                }
-            }
-            true
-        }
-    }
-}
-
-struct Index {
-    raw: *mut pgrx::pg_sys::RelationData,
-    lockmode: pgrx::pg_sys::LOCKMODE,
-}
-
-impl Index {
-    fn open(indexrelid: pgrx::pg_sys::Oid, lockmode: pgrx::pg_sys::LOCKMASK) -> Self {
-        Self {
-            raw: unsafe { pgrx::pg_sys::index_open(indexrelid, lockmode) },
-            lockmode,
-        }
-    }
-    fn raw(&self) -> *mut pgrx::pg_sys::RelationData {
-        self.raw
-    }
-}
-
-impl Drop for Index {
-    fn drop(&mut self) {
-        unsafe {
-            pgrx::pg_sys::index_close(self.raw, self.lockmode);
-        }
-    }
-}
-
-pub const fn ctid_to_key(
-    ItemPointerData {
-        ip_blkid: BlockIdData { bi_hi, bi_lo },
-        ip_posid,
-    }: ItemPointerData,
-) -> [u16; 3] {
-    [bi_hi, bi_lo, ip_posid]
-}
-
-pub const fn key_to_ctid([bi_hi, bi_lo, ip_posid]: [u16; 3]) -> ItemPointerData {
-    ItemPointerData {
-        ip_blkid: BlockIdData { bi_hi, bi_lo },
-        ip_posid,
-    }
-}
-
-pub const fn pointer_to_kv(pointer: NonZero<u64>) -> ([u16; 3], u16) {
-    let value = pointer.get();
-    let bi_hi = ((value >> 48) & 0xffff) as u16;
-    let bi_lo = ((value >> 32) & 0xffff) as u16;
-    let ip_posid = ((value >> 16) & 0xffff) as u16;
-    let extra = value as u16;
-    ([bi_hi, bi_lo, ip_posid], extra)
-}
-
-pub const fn kv_to_pointer((key, value): ([u16; 3], u16)) -> NonZero<u64> {
-    let x = (key[0] as u64) << 48 | (key[1] as u64) << 32 | (key[2] as u64) << 16 | value as u64;
-    NonZero::new(x).expect("invalid key")
 }

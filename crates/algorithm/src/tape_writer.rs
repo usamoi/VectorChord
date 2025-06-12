@@ -14,7 +14,8 @@
 
 use crate::tape::TapeWriter;
 use crate::tuples::*;
-use crate::{Branch, RelationWrite};
+use crate::{Branch, Opaque};
+use algo::{Page, RelationWrite};
 use rabitq::packing::{any_pack, padding_pack};
 use std::num::NonZero;
 
@@ -28,6 +29,7 @@ where
 impl<'a, R> DirectoryTapeWriter<'a, R>
 where
     R: RelationWrite + 'a,
+    R::Page: Page<Opaque = Opaque>,
 {
     pub fn create(index: &'a R, tracking_freespace: bool) -> Self {
         Self {
@@ -70,6 +72,7 @@ where
 impl<'a, R> H1TapeWriter<'a, R>
 where
     R: RelationWrite + 'a,
+    R::Page: Page<Opaque = Opaque>,
 {
     pub fn create(index: &'a R, prefetch: usize, tracking_freespace: bool) -> Self {
         Self {
@@ -169,6 +172,7 @@ where
 impl<'a, R> FrozenTapeWriter<'a, R>
 where
     R: RelationWrite + 'a,
+    R::Page: Page<Opaque = Opaque>,
 {
     pub fn create(index: &'a R, prefetch: usize, tracking_freespace: bool) -> Self {
         Self {

@@ -14,9 +14,10 @@
 
 use crate::closure_lifetime_binder::id_4;
 use crate::operator::*;
-use crate::prefetcher::Prefetcher;
 use crate::tuples::{MetaTuple, WithReader};
-use crate::{Page, RelationRead, RerankMethod, vectors};
+use crate::{Page, vectors};
+use algo::prefetcher::Prefetcher;
+use algo::{RelationRead, RerankMethod};
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use std::cmp::Reverse;
