@@ -13,7 +13,7 @@
 // Copyright (c) 2025 TensorChord Inc.
 
 use crate::operator::Vector;
-use std::marker::PhantomData;
+use algo::tuples::{Bool, MutChecker, Padding, RefChecker};
 use std::num::NonZero;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
@@ -46,10 +46,10 @@ struct MetaTupleHeader {
     rerank_in_heap: Bool,
     cells_s: u16,
     cells_e: u16,
-    _padding_0: [ZeroU8; 2],
+    _padding_0: [Padding; 2],
     vectors_first: u32,
     freepages_first: u32,
-    _padding_1: [ZeroU8; 2],
+    _padding_1: [Padding; 2],
     // tree
     centroid_prefetch_s: u16,
     centroid_prefetch_e: u16,
@@ -206,7 +206,7 @@ impl<'a> MetaTupleReader<'a> {
 #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
 struct FreepagesTupleHeader {
     first: u32,
-    _padding_0: [ZeroU8; 4],
+    _padding_0: [Padding; 4],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -250,7 +250,7 @@ struct VectorTupleHeader0 {
     metadata_s: u16,
     elements_s: u16,
     elements_e: u16,
-    _padding_0: [ZeroU8; 2],
+    _padding_0: [Padding; 2],
 }
 
 #[repr(C, align(8))]
@@ -260,7 +260,7 @@ struct VectorTupleHeader1 {
     head: u16,
     elements_s: u16,
     elements_e: u16,
-    _padding_0: [ZeroU8; 2],
+    _padding_0: [Padding; 2],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -423,7 +423,7 @@ impl<'a, V: Vector> VectorTupleReader<'a, V> {
 struct DirectoryTupleHeader0 {
     elements_s: u16,
     elements_e: u16,
-    _padding_0: [ZeroU8; 4],
+    _padding_0: [Padding; 4],
 }
 
 #[repr(C, align(8))]
@@ -431,7 +431,7 @@ struct DirectoryTupleHeader0 {
 struct DirectoryTupleHeader1 {
     elements_s: u16,
     elements_e: u16,
-    _padding_0: [ZeroU8; 4],
+    _padding_0: [Padding; 4],
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -579,7 +579,7 @@ struct H1TupleHeader0 {
     len: u32,
     elements_s: u16,
     elements_e: u16,
-    _padding_0: [ZeroU8; 4],
+    _padding_0: [Padding; 4],
 }
 
 #[repr(C, align(8))]
@@ -587,7 +587,7 @@ struct H1TupleHeader0 {
 struct H1TupleHeader1 {
     elements_s: u16,
     elements_e: u16,
-    _padding_0: [ZeroU8; 4],
+    _padding_0: [Padding; 4],
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -793,7 +793,7 @@ struct JumpTupleHeader {
     centroid_prefetch_s: u16,
     centroid_prefetch_e: u16,
     centroid_head: u16,
-    _padding_0: [ZeroU8; 2],
+    _padding_0: [Padding; 2],
     directory_first: u32,
     appendable_first: u32,
     tuples: u64,
@@ -919,7 +919,7 @@ struct FrozenTupleHeader0 {
 struct FrozenTupleHeader1 {
     elements_s: u16,
     elements_e: u16,
-    _padding_0: [ZeroU8; 4],
+    _padding_0: [Padding; 4],
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -1165,7 +1165,7 @@ struct AppendableTupleHeader {
     prefetch_s: u16,
     prefetch_e: u16,
     head: u16,
-    _padding_0: [ZeroU8; 2],
+    _padding_0: [Padding; 2],
     elements_s: u16,
     elements_e: u16,
     // it's the last field for reducing padding bytes
@@ -1285,185 +1285,4 @@ impl AppendableTupleWriter<'_> {
     pub fn payload(&mut self) -> &mut Option<NonZero<u64>> {
         &mut self.header.payload
     }
-}
-
-#[repr(transparent)]
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    IntoBytes,
-    FromBytes,
-    Immutable,
-    KnownLayout,
-)]
-pub struct ZeroU8(Option<NonZero<u8>>);
-
-#[repr(transparent)]
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    IntoBytes,
-    FromBytes,
-    Immutable,
-    KnownLayout,
-)]
-pub struct Bool(u8);
-
-impl Bool {
-    pub const FALSE: Self = Self(0);
-    pub const TRUE: Self = Self(1);
-}
-
-impl From<Bool> for bool {
-    fn from(value: Bool) -> Self {
-        value != Bool::FALSE
-    }
-}
-
-impl From<bool> for Bool {
-    fn from(value: bool) -> Self {
-        if value { Self::TRUE } else { Self::FALSE }
-    }
-}
-
-pub struct RefChecker<'a> {
-    bytes: &'a [u8],
-}
-
-impl<'a> RefChecker<'a> {
-    pub fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes }
-    }
-    pub fn prefix<T: FromBytes + IntoBytes + KnownLayout + Immutable + Sized>(
-        &self,
-        s: impl Into<usize> + Copy,
-    ) -> &'a T {
-        let start = Into::<usize>::into(s);
-        let end = Into::<usize>::into(s) + size_of::<T>();
-        let bytes = &self.bytes[start..end];
-        FromBytes::ref_from_bytes(bytes).expect("deserialization: bad bytes")
-    }
-    pub fn bytes<T: FromBytes + IntoBytes + KnownLayout + Immutable + ?Sized>(
-        &self,
-        s: impl Into<usize> + Copy,
-        e: impl Into<usize> + Copy,
-    ) -> &'a T {
-        let start = Into::<usize>::into(s);
-        let end = Into::<usize>::into(e);
-        let bytes = &self.bytes[start..end];
-        FromBytes::ref_from_bytes(bytes).expect("deserialization: bad bytes")
-    }
-}
-
-pub struct MutChecker<'a> {
-    flag: usize,
-    bytes: *mut [u8],
-    phantom: PhantomData<&'a mut [u8]>,
-}
-
-impl<'a> MutChecker<'a> {
-    pub fn new(bytes: &'a mut [u8]) -> Self {
-        Self {
-            flag: 0,
-            bytes,
-            phantom: PhantomData,
-        }
-    }
-    pub fn prefix<T: FromBytes + IntoBytes + KnownLayout + Sized>(
-        &mut self,
-        s: impl Into<usize> + Copy,
-    ) -> &'a mut T {
-        let start = Into::<usize>::into(s);
-        let end = Into::<usize>::into(s) + size_of::<T>();
-        if !(start <= end && end <= self.bytes.len()) {
-            panic!("deserialization: bad bytes");
-        }
-        if !(self.flag <= start) {
-            panic!("deserialization: bad bytes");
-        } else {
-            self.flag = end;
-        }
-        #[allow(unsafe_code)]
-        let bytes = unsafe {
-            std::slice::from_raw_parts_mut((self.bytes as *mut u8).add(start), end - start)
-        };
-        FromBytes::mut_from_bytes(bytes).expect("deserialization: bad bytes")
-    }
-    pub fn bytes<T: FromBytes + IntoBytes + KnownLayout + ?Sized>(
-        &mut self,
-        s: impl Into<usize> + Copy,
-        e: impl Into<usize> + Copy,
-    ) -> &'a mut T {
-        let start = Into::<usize>::into(s);
-        let end = Into::<usize>::into(e);
-        if !(start <= end && end <= self.bytes.len()) {
-            panic!("deserialization: bad bytes");
-        }
-        if !(self.flag <= start) {
-            panic!("deserialization: bad bytes");
-        } else {
-            self.flag = end;
-        }
-        #[allow(unsafe_code)]
-        let bytes = unsafe {
-            std::slice::from_raw_parts_mut((self.bytes as *mut u8).add(start), end - start)
-        };
-        FromBytes::mut_from_bytes(bytes).expect("deserialization: bad bytes")
-    }
-}
-
-#[test]
-fn aliasing_test() {
-    #[repr(C, align(8))]
-    #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
-    struct ExampleHeader {
-        elements_s: u16,
-        elements_e: u16,
-        _padding_0: [ZeroU8; 4],
-    }
-    let serialized = {
-        let elements = (0u32..1111).collect::<Vec<u32>>();
-        let mut buffer = Vec::<u8>::new();
-        buffer.extend(std::iter::repeat_n(0, size_of::<ExampleHeader>()));
-        let elements_s = buffer.len() as u16;
-        buffer.extend(elements.as_bytes());
-        let elements_e = buffer.len() as u16;
-        while buffer.len() % ALIGN != 0 {
-            buffer.push(0);
-        }
-        buffer[..size_of::<ExampleHeader>()].copy_from_slice(
-            ExampleHeader {
-                elements_s,
-                elements_e,
-                _padding_0: Default::default(),
-            }
-            .as_bytes(),
-        );
-        buffer
-    };
-    let mut source = vec![0u64; serialized.len().next_multiple_of(8)];
-    source.as_mut_bytes()[..serialized.len()].copy_from_slice(&serialized);
-    let deserialized = {
-        let mut checker = MutChecker::new(source.as_mut_bytes());
-        let header: &mut ExampleHeader = checker.prefix(0_u16);
-        let elements: &mut [u32] = checker.bytes(header.elements_s, header.elements_e);
-        (header, elements)
-    };
-    assert_eq!(
-        deserialized.1,
-        (0u32..1111).collect::<Vec<u32>>().as_slice()
-    );
 }

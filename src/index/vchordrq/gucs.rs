@@ -12,7 +12,7 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-use super::scanners::Io;
+use crate::index::vchordrq::scanners::Io;
 use pgrx::PostgresGucEnum;
 use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting};
 use std::ffi::CStr;

@@ -15,11 +15,11 @@
 mod default;
 mod maxsim;
 
+use crate::index::fetcher::Fetcher;
+
 use super::opclass::Opfamily;
-use algorithm::{Bump, RelationPrefetch, RelationRead, RelationReadStream, Sequence};
+use algo::{Bump, Page, RelationPrefetch, RelationRead, RelationReadStream, Sequence};
 use pgrx::pg_sys::Datum;
-use std::cell::LazyCell;
-use std::ops::DerefMut;
 
 pub use default::DefaultBuilder;
 pub use maxsim::MaxsimBuilder;
@@ -48,6 +48,8 @@ pub struct SearchOptions {
 }
 
 pub trait SearchBuilder: 'static {
+    type Opaque: Copy;
+
     fn new(opfamily: Opfamily) -> Self;
 
     unsafe fn add(&mut self, strategy: u16, datum: Option<Datum>);
@@ -60,31 +62,8 @@ pub trait SearchBuilder: 'static {
         bump: &'a impl Bump,
     ) -> Box<dyn Iterator<Item = (f32, [u16; 3], bool)> + 'a>
     where
-        R: RelationRead + RelationPrefetch + RelationReadStream;
-}
-
-pub trait Fetcher {
-    type Tuple<'a>: Tuple
-    where
-        Self: 'a;
-
-    fn fetch(&mut self, key: [u16; 3]) -> Option<Self::Tuple<'_>>;
-}
-
-pub trait Tuple {
-    fn build(&mut self) -> (&[Datum; 32], &[bool; 32]);
-    fn filter(&mut self) -> bool;
-}
-
-impl<T: Fetcher, F: FnOnce() -> T> Fetcher for LazyCell<T, F> {
-    type Tuple<'a>
-        = T::Tuple<'a>
-    where
-        Self: 'a;
-
-    fn fetch(&mut self, key: [u16; 3]) -> Option<Self::Tuple<'_>> {
-        self.deref_mut().fetch(key)
-    }
+        R: RelationRead + RelationPrefetch + RelationReadStream,
+        R::Page: Page<Opaque = Self::Opaque>;
 }
 
 pub struct Filter<S, P> {

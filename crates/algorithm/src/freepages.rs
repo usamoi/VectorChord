@@ -13,9 +13,13 @@
 // Copyright (c) 2025 TensorChord Inc.
 
 use crate::tuples::*;
-use crate::*;
+use crate::{Opaque, Page};
+use algo::RelationWrite;
 
-pub fn alloc<R: RelationWrite>(index: &R, freepages_first: u32) -> Option<R::WriteGuard<'_>> {
+pub fn alloc<R: RelationWrite>(index: &R, freepages_first: u32) -> Option<R::WriteGuard<'_>>
+where
+    R::Page: Page<Opaque = Opaque>,
+{
     let mut freepages_guard = index.write(freepages_first, false);
     let freepages_bytes = freepages_guard.get_mut(1).expect("data corruption");
     let mut freepages_tuple = FreepagesTuple::deserialize_mut(freepages_bytes);
@@ -31,7 +35,10 @@ pub fn alloc<R: RelationWrite>(index: &R, freepages_first: u32) -> Option<R::Wri
 }
 
 // the page must be inaccessible in the graph
-pub fn free<R: RelationWrite>(index: &R, freepages_first: u32, id: u32) {
+pub fn free<R: RelationWrite>(index: &R, freepages_first: u32, id: u32)
+where
+    R::Page: Page<Opaque = Opaque>,
+{
     let mut guard = index.write(id, false);
     let mut freepages_guard = index.write(freepages_first, false);
     let freepages_bytes = freepages_guard.get_mut(1).expect("data corruption");

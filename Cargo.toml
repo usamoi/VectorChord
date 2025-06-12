@@ -21,22 +21,24 @@ pg16 = ["pgrx/pg16", "pgrx-catalog/pg16"]
 pg17 = ["pgrx/pg17", "pgrx-catalog/pg17"]
 
 [dependencies]
+algo = { path = "./crates/algo" }
 algorithm = { path = "./crates/algorithm" }
 always_equal = { path = "./crates/always_equal" }
 distance = { path = "./crates/distance" }
 k_means = { path = "./crates/k_means" }
 rabitq = { path = "./crates/rabitq" }
 simd = { path = "./crates/simd" }
+vamana = { path = "./crates/vamana" }
 vector = { path = "./crates/vector" }
 
 half.workspace = true
 paste.workspace = true
-pgrx = { version = "=0.14.1", default-features = false, features = ["cshim"] }
+pgrx = { version = "=0.14.3", default-features = false, features = ["cshim"] }
 pgrx-catalog = "0.2.0"
 rand.workspace = true
 seq-macro.workspace = true
 serde.workspace = true
-toml = "0.8.22"
+toml = "0.8.23"
 validator.workspace = true
 zerocopy.workspace = true
 
