@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use validator::{Validate, ValidationError};
 use vector::vect::{VectBorrowed, VectOwned};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct VchordrqIndexOptions {
     #[serde(default = "VchordrqIndexOptions::default_residual_quantization")]
@@ -32,6 +32,15 @@ impl VchordrqIndexOptions {
     }
     fn default_rerank_in_table() -> bool {
         false
+    }
+}
+
+impl Default for VchordrqIndexOptions {
+    fn default() -> Self {
+        Self {
+            residual_quantization: Self::default_residual_quantization(),
+            rerank_in_table: Self::default_rerank_in_table(),
+        }
     }
 }
 

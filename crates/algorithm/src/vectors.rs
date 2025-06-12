@@ -14,7 +14,8 @@
 
 use crate::operator::*;
 use crate::tuples::*;
-use crate::{Page, PageGuard, RelationRead, RelationWrite, tape};
+use crate::{Opaque, Page, PageGuard, tape};
+use algo::{RelationRead, RelationWrite};
 use std::num::NonZero;
 use vector::VectorOwned;
 
@@ -78,13 +79,19 @@ pub fn read_for_h0_tuple<
     result.finish(cursor.ok()?)
 }
 
-pub fn append<O: Operator>(
-    index: &(impl RelationRead + RelationWrite),
+pub fn append<O: Operator, R: RelationRead + RelationWrite>(
+    index: &R,
     vectors_first: u32,
     vector: <O::Vector as VectorOwned>::Borrowed<'_>,
     payload: NonZero<u64>,
-) -> (Vec<u32>, u16) {
-    fn append(index: &(impl RelationRead + RelationWrite), first: u32, bytes: &[u8]) -> (u32, u16) {
+) -> (Vec<u32>, u16)
+where
+    R::Page: Page<Opaque = Opaque>,
+{
+    fn append<R: RelationRead + RelationWrite>(index: &R, first: u32, bytes: &[u8]) -> (u32, u16)
+    where
+        R::Page: Page<Opaque = Opaque>,
+    {
         if let Some(mut write) = index.search(bytes.len()) {
             let i = write
                 .alloc(bytes)

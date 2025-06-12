@@ -15,10 +15,11 @@
 use crate::closure_lifetime_binder::id_2;
 use crate::linked_vec::LinkedVec;
 use crate::operator::*;
-use crate::prefetcher::{Prefetcher, PrefetcherSequenceFamily};
 use crate::tape::{by_directory, by_next};
 use crate::tuples::*;
-use crate::{Bump, Page, PrefetcherHeapFamily, RelationRead, tape, vectors};
+use crate::{Opaque, Page, tape, vectors};
+use algo::prefetcher::{Prefetcher, PrefetcherHeapFamily, PrefetcherSequenceFamily};
+use algo::{Bump, RelationRead};
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use std::cmp::Reverse;
@@ -37,7 +38,10 @@ pub fn default_search<'r, 'b: 'r, R: RelationRead, O: Operator>(
     bump: &'b impl Bump,
     mut prefetch_h1_vectors: impl PrefetcherHeapFamily<'r, R>,
     mut prefetch_h0_tuples: impl PrefetcherSequenceFamily<'r, R>,
-) -> Vec<((Reverse<Distance>, AlwaysEqual<()>), AlwaysEqual<Extra<'b>>)> {
+) -> Vec<((Reverse<Distance>, AlwaysEqual<()>), AlwaysEqual<Extra<'b>>)>
+where
+    R::Page: Page<Opaque = Opaque>,
+{
     let meta_guard = index.read(0);
     let meta_bytes = meta_guard.get(1).expect("data corruption");
     let meta_tuple = MetaTuple::deserialize_ref(meta_bytes);
@@ -167,7 +171,10 @@ pub fn maxsim_search<'r, 'b: 'r, R: RelationRead, O: Operator>(
         AlwaysEqual<Extra<'b>>,
     )>,
     Distance,
-) {
+)
+where
+    R::Page: Page<Opaque = Opaque>,
+{
     let meta_guard = index.read(0);
     let meta_bytes = meta_guard.get(1).expect("data corruption");
     let meta_tuple = MetaTuple::deserialize_ref(meta_bytes);

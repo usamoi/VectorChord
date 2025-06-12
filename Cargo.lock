@@ -18,9 +18,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "algo"
+version = "0.0.0"
+dependencies = [
+ "always_equal",
+ "zerocopy",
+]
+
+[[package]]
 name = "algorithm"
 version = "0.0.0"
 dependencies = [
+ "algo",
  "always_equal",
  "distance",
  "half 2.6.0",
@@ -364,6 +373,9 @@ dependencies = [
 [[package]]
 name = "distance"
 version = "0.0.0"
+dependencies = [
+ "zerocopy",
+]
 
 [[package]]
 name = "either"
@@ -801,6 +813,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
+name = "min-max-heap"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2687e6cf9c00f48e9284cf9fd15f2ef341d03cc7743abf9df4c5f07fdee50b18"
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -898,9 +916,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx"
-version = "0.14.1"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab5a7f1a5bac3a76a4fa056655eb80e394c5216717bf4673c99d9d10583e960d"
+checksum = "3dffb5a99b514090574a668078a28394317d30bbb33a8b6d651342ebd945e81b"
 dependencies = [
  "atomic-traits",
  "bitflags",
@@ -922,9 +940,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx-bindgen"
-version = "0.14.1"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09e1a6df74e60ac82d6ad52f8a2a85e5d7004f9dfc7c52c94d461d9193aafa0b"
+checksum = "e9e43f241932f230af1ed713fac06133a074efb12a80705db7f679627551b5a8"
 dependencies = [
  "bindgen",
  "cc",
@@ -951,9 +969,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx-macros"
-version = "0.14.1"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "868ae3cb1762dcca0e236d4b5368315d4f377acbfff31d8fad9f47394d2e4bcd"
+checksum = "0c97650c7bb75290fc0b7e1a80bc5cea74e541015369a6558f72fb3da0c0e95e"
 dependencies = [
  "pgrx-sql-entity-graph",
  "proc-macro2",
@@ -963,9 +981,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx-pg-config"
-version = "0.14.1"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "421be70840655a502381d4ac84b263da83c6714018e27bfdcd7c48f32ff60ef6"
+checksum = "6a370f7f6127487e50be58aaf6544439352ff667e9ab6e5e6b24fb77f794315b"
 dependencies = [
  "cargo_toml",
  "eyre",
@@ -981,9 +999,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx-pg-sys"
-version = "0.14.1"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c844a49ee575cf4bd3340c483e49160a99b1bd8c5fd2e87fc7a9231566cb07f2"
+checksum = "aa062f644530005641b5cdc4b5d1303c70ffa38bd1089699035ea46adac41b6d"
 dependencies = [
  "cee-scape",
  "libc",
@@ -996,9 +1014,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx-sql-entity-graph"
-version = "0.14.1"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "391595ab6d13f65728bdd691fdd58e69bb31f1f092886ed0a11c838de1d01ae9"
+checksum = "fc58ca1db80bc9b38e38be7d65e3dd6ba2813083410e7a81ed9db70147c40f86"
 dependencies = [
  "convert_case",
  "eyre",
@@ -1303,9 +1321,9 @@ dependencies = [
 
 [[package]]
 name = "serde_spanned"
-version = "0.6.8"
+version = "0.6.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87607cb1398ed59d48732e575a4c28a7a8ebf2454b964fe3f224f2afc07909e1"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
 dependencies = [
  "serde",
 ]
@@ -1460,9 +1478,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.8.22"
+version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05ae329d1f08c4d17a59bed7ff5b5a769d062e64a62d34a3261b219e62cd5aae"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
 dependencies = [
  "serde",
  "serde_spanned",
@@ -1472,18 +1490,18 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "0.6.9"
+version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3da5db5a963e24bc68be8b17b6fa82814bb22ee8660f192bb182771d498f09a3"
+checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "toml_edit"
-version = "0.22.26"
+version = "0.22.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "310068873db2c5b3e7659d2cc35d21855dbafa50d1ce336397c666e3cb08137e"
+checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
  "indexmap",
  "serde",
@@ -1495,9 +1513,9 @@ dependencies = [
 
 [[package]]
 name = "toml_write"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfb942dfe1d8e29a7ee7fcbde5bd2b9a25fb89aa70caea2eba3bee836ff41076"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "twox-hash"
@@ -1596,9 +1614,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "vamana"
+version = "0.0.0"
+dependencies = [
+ "algo",
+ "always_equal",
+ "distance",
+ "half 2.6.0",
+ "k_means",
+ "min-max-heap",
+ "paste",
+ "pin-project",
+ "rabitq",
+ "rand",
+ "serde",
+ "simd",
+ "validator",
+ "vector",
+ "zerocopy",
+]
+
+[[package]]
 name = "vchord"
 version = "0.0.0"
 dependencies = [
+ "algo",
  "algorithm",
  "always_equal",
  "distance",
@@ -1615,6 +1655,7 @@ dependencies = [
  "simd",
  "toml",
  "validator",
+ "vamana",
  "vector",
  "zerocopy",
 ]

@@ -17,7 +17,9 @@ use crate::operator::{FunctionalAccessor, Operator, Vector};
 use crate::tape::{self, TapeWriter, by_directory, by_next};
 use crate::tape_writer::{DirectoryTapeWriter, FrozenTapeWriter};
 use crate::tuples::*;
-use crate::*;
+use crate::{Branch, Opaque, Page, freepages};
+use algo::prefetcher::PrefetcherSequenceFamily;
+use algo::{PageGuard, Relation, RelationRead, RelationWrite};
 use rabitq::packing::unpack;
 use std::cell::RefCell;
 
@@ -31,7 +33,10 @@ pub fn maintain<'r, R: RelationRead + RelationWrite, O: Operator>(
     index: &'r R,
     mut prefetch_h0_tuples: impl PrefetcherSequenceFamily<'r, R>,
     check: impl Fn(),
-) -> Maintain {
+) -> Maintain
+where
+    R::Page: Page<Opaque = Opaque>,
+{
     let meta_guard = index.read(0);
     let meta_bytes = meta_guard.get(1).expect("data corruption");
     let meta_tuple = MetaTuple::deserialize_ref(meta_bytes);
@@ -78,26 +83,26 @@ pub fn maintain<'r, R: RelationRead + RelationWrite, O: Operator>(
         let mut jump_tuple = JumpTuple::deserialize_mut(jump_bytes);
 
         let hooked_index = RelationHooked(index, {
-            id_3(|index: &R, tracking_freespace: bool| {
+            id_3(|index: &R, opaque: Opaque, tracking_freespace: bool| {
                 if !tracking_freespace {
                     let mut buffers = buffers.borrow_mut();
                     if let Some(id) = buffers.pages.pop() {
                         drop(buffers);
                         let mut guard = index.write(id, false);
-                        guard.clear();
+                        guard.clear(opaque);
                         guard
                     } else if let Some(mut guard) = freepages::alloc(index, freepages_first) {
                         buffers.number_of_formerly_allocated_pages += 1;
                         drop(buffers);
-                        guard.clear();
+                        guard.clear(opaque);
                         guard
                     } else {
                         buffers.number_of_freshly_allocated_pages += 1;
                         drop(buffers);
-                        index.extend(false)
+                        index.extend(opaque, false)
                     }
                 } else {
-                    index.extend(true)
+                    index.extend(opaque, true)
                 }
             })
         });
@@ -141,7 +146,7 @@ pub fn maintain<'r, R: RelationRead + RelationWrite, O: Operator>(
                                 let signs = unpacked[i].iter().flat_map(f).collect::<Vec<_>>();
                                 (
                                     (
-                                        rabitq::CodeMetadata {
+                                        rabitq::b1::CodeMetadata {
                                             dis_u_2: metadata[0][i],
                                             factor_cnt: metadata[1][i],
                                             factor_ip: metadata[2][i],
@@ -170,7 +175,7 @@ pub fn maintain<'r, R: RelationRead + RelationWrite, O: Operator>(
                     .collect::<Vec<_>>();
                 (
                     (
-                        rabitq::CodeMetadata {
+                        rabitq::b1::CodeMetadata {
                             dis_u_2: metadata[0],
                             factor_cnt: metadata[1],
                             factor_ip: metadata[2],
@@ -196,7 +201,7 @@ pub fn maintain<'r, R: RelationRead + RelationWrite, O: Operator>(
                     branch.code.0.factor_ip,
                     branch.code.0.factor_err,
                 ],
-                elements: rabitq::packing::pack_to_u64(&branch.code.1),
+                elements: rabitq::b1::binary::pack_code(&branch.code.1),
                 delta: branch.delta,
                 prefetch: branch.prefetch,
                 head: branch.head,
@@ -268,7 +273,7 @@ where
 impl<'r, R, E> RelationWrite for RelationHooked<'r, R, E>
 where
     R: RelationWrite,
-    E: Clone + for<'a> Fn(&'a R, bool) -> R::WriteGuard<'a>,
+    E: Clone + for<'a> Fn(&'a R, <Self::Page as Page>::Opaque, bool) -> R::WriteGuard<'a>,
 {
     type WriteGuard<'a>
         = R::WriteGuard<'a>
@@ -279,8 +284,12 @@ where
         self.0.write(id, tracking_freespace)
     }
 
-    fn extend(&self, tracking_freespace: bool) -> Self::WriteGuard<'_> {
-        (self.1)(self.0, tracking_freespace)
+    fn extend(
+        &self,
+        opaque: <Self::Page as Page>::Opaque,
+        tracking_freespace: bool,
+    ) -> Self::WriteGuard<'_> {
+        (self.1)(self.0, opaque, tracking_freespace)
     }
 
     fn search(&self, freespace: usize) -> Option<Self::WriteGuard<'_>> {

@@ -17,7 +17,9 @@ use crate::operator::*;
 use crate::tape::by_next;
 use crate::tuples::*;
 use crate::vectors::{self};
-use crate::{Bump, Page, Prefetcher, PrefetcherHeapFamily, RelationRead, RelationWrite, tape};
+use crate::{Opaque, Page, tape};
+use algo::prefetcher::{Prefetcher, PrefetcherHeapFamily};
+use algo::{Bump, RelationRead, RelationWrite};
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use std::cmp::Reverse;
@@ -31,7 +33,10 @@ pub fn insert_vector<R: RelationRead + RelationWrite, O: Operator>(
     index: &R,
     payload: NonZero<u64>,
     vector: <O::Vector as VectorOwned>::Borrowed<'_>,
-) -> (Vec<u32>, u16) {
+) -> (Vec<u32>, u16)
+where
+    R::Page: Page<Opaque = Opaque>,
+{
     let meta_guard = index.read(0);
     let meta_bytes = meta_guard.get(1).expect("data corruption");
     let meta_tuple = MetaTuple::deserialize_ref(meta_bytes);
@@ -43,7 +48,7 @@ pub fn insert_vector<R: RelationRead + RelationWrite, O: Operator>(
     drop(meta_guard);
 
     if !rerank_in_heap {
-        vectors::append::<O>(index, vectors_first, vector, payload)
+        vectors::append::<O, R>(index, vectors_first, vector, payload)
     } else {
         (Vec::new(), 0)
     }
@@ -57,7 +62,9 @@ pub fn insert<'r, 'b: 'r, R: RelationRead + RelationWrite, O: Operator>(
     bump: &'b impl Bump,
     mut prefetch_h1_vectors: impl PrefetcherHeapFamily<'r, R>,
     skip_freespaces: bool,
-) {
+) where
+    R::Page: Page<Opaque = Opaque>,
+{
     let meta_guard = index.read(0);
     let meta_bytes = meta_guard.get(1).expect("data corruption");
     let meta_tuple = MetaTuple::deserialize_ref(meta_bytes);
@@ -166,7 +173,7 @@ pub fn insert<'r, 'b: 'r, R: RelationRead + RelationWrite, O: Operator>(
         payload: Some(payload),
         prefetch,
         head,
-        elements: rabitq::packing::pack_to_u64(&code.1),
+        elements: rabitq::b1::binary::pack_code(&code.1),
     });
 
     tape::append(

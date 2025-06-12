@@ -16,9 +16,13 @@ use crate::closure_lifetime_binder::{id_0, id_1};
 use crate::operator::FunctionalAccessor;
 use crate::tape::by_next;
 use crate::tuples::{MetaTuple, WithReader};
-use crate::{Page, PageGuard, RelationRead, tape};
+use crate::{Opaque, Page, PageGuard, tape};
+use algo::RelationRead;
 
-pub fn cache<R: RelationRead>(index: &R) -> Vec<u32> {
+pub fn cache<R: RelationRead>(index: &R) -> Vec<u32>
+where
+    R::Page: Page<Opaque = Opaque>,
+{
     let mut trace = vec![0_u32];
     let meta_guard = index.read(0);
     let meta_bytes = meta_guard.get(1).expect("data corruption");

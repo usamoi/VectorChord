@@ -16,7 +16,9 @@ use crate::closure_lifetime_binder::{id_0, id_1, id_2};
 use crate::operator::{FunctionalAccessor, Operator};
 use crate::tape::{by_directory, by_next};
 use crate::tuples::*;
-use crate::{Bump, Page, PrefetcherSequenceFamily, RelationRead, tape, vectors};
+use crate::{Opaque, Page, tape, vectors};
+use algo::prefetcher::PrefetcherSequenceFamily;
+use algo::{Bump, RelationRead};
 use std::fmt::Write;
 
 pub fn prewarm<'r, 'b: 'r, R: RelationRead, O: Operator>(
@@ -24,7 +26,10 @@ pub fn prewarm<'r, 'b: 'r, R: RelationRead, O: Operator>(
     height: i32,
     bump: &'b impl Bump,
     mut prefetch_h0_tuples: impl PrefetcherSequenceFamily<'r, R>,
-) -> String {
+) -> String
+where
+    R::Page: Page<Opaque = Opaque>,
+{
     let meta_guard = index.read(0);
     let meta_bytes = meta_guard.get(1).expect("data corruption");
     let meta_tuple = MetaTuple::deserialize_ref(meta_bytes);

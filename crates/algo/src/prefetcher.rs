@@ -12,7 +12,9 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-use crate::*;
+use crate::{
+    Fetch, Hints, ReadStream, RelationPrefetch, RelationRead, RelationReadStream, Sequence,
+};
 use std::collections::{VecDeque, vec_deque};
 use std::iter::Chain;
 

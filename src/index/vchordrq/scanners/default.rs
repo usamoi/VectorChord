@@ -12,11 +12,12 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-use super::{Fetcher, Io, SearchBuilder, SearchOptions, filter};
-use crate::index::algorithm::*;
-use crate::index::am::pointer_to_kv;
-use crate::index::opclass::{Opfamily, Sphere};
-use crate::index::scanners::Tuple;
+use super::{Io, SearchBuilder, SearchOptions, filter};
+use crate::index::fetcher::*;
+use crate::index::vchordrq::algo::*;
+use crate::index::vchordrq::opclass::{Opfamily, Sphere};
+use algo::prefetcher::*;
+use algo::*;
 use algorithm::operator::{self, Dot, L2};
 use algorithm::types::{DistanceKind, OwnedVector, VectorKind};
 use algorithm::*;
@@ -34,6 +35,8 @@ pub struct DefaultBuilder {
 }
 
 impl SearchBuilder for DefaultBuilder {
+    type Opaque = algorithm::Opaque;
+
     fn new(opfamily: Opfamily) -> Self {
         assert!(matches!(
             opfamily,
@@ -74,6 +77,7 @@ impl SearchBuilder for DefaultBuilder {
     ) -> Box<dyn Iterator<Item = (f32, [u16; 3], bool)> + 'a>
     where
         R: RelationRead + RelationPrefetch + RelationReadStream,
+        R::Page: Page<Opaque = algorithm::Opaque>,
     {
         let mut vector = None;
         let mut threshold = None;
