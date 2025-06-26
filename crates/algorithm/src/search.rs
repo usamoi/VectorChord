@@ -18,6 +18,7 @@ use crate::operator::*;
 use crate::tape::{by_directory, by_next};
 use crate::tuples::*;
 use crate::{Opaque, Page, tape, vectors};
+use algo::accessor::LAccess;
 use algo::prefetcher::{Prefetcher, PrefetcherHeapFamily, PrefetcherSequenceFamily};
 use algo::{Bump, RelationRead};
 use always_equal::AlwaysEqual;

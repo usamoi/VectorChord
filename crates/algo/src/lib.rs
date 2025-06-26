@@ -14,6 +14,7 @@
 
 #![allow(clippy::type_complexity)]
 
+pub mod accessor;
 pub mod prefetcher;
 pub mod tuples;
 
@@ -164,6 +165,8 @@ pub trait Bump: 'static {
     fn alloc<T>(&self, value: T) -> &mut T;
     #[allow(clippy::mut_from_ref)]
     fn alloc_slice<T: Copy>(&self, slice: &[T]) -> &mut [T];
+    #[allow(clippy::mut_from_ref)]
+    fn alloc_slice_default<T: Copy>(&self, len: usize) -> &mut [T];
 }
 
 pub trait Fetch {
@@ -200,6 +203,12 @@ impl<T> Fetch for (T, AlwaysEqual<(u32, u16)>) {
 impl Fetch for (u32, u16) {
     fn fetch(&self) -> &[u32] {
         std::slice::from_ref(&self.0)
+    }
+}
+
+impl<T> Fetch for (T, AlwaysEqual<&mut [(u32, u16)]>) {
+    fn fetch(&self) -> &[u32] {
+        todo!()
     }
 }
 

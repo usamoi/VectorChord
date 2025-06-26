@@ -14,7 +14,7 @@ impl Visited {
     pub fn insert(&mut self, x: Id) {
         self.inner.insert(x);
     }
-    pub fn contains(&mut self, x: Id) -> bool {
+    pub fn contains(& self, x: Id) -> bool {
         self.inner.contains(&x)
     }
 }

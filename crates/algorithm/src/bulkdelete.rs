@@ -13,11 +13,12 @@
 // Copyright (c) 2025 TensorChord Inc.
 
 use crate::closure_lifetime_binder::{id_0, id_1};
-use crate::operator::{FunctionalAccessor, Operator};
+use crate::operator::{Operator};
 use crate::tape::by_next;
 use crate::tuples::*;
 use crate::{Opaque, Page, tape};
 use algo::{RelationRead, RelationWrite};
+use algo::accessor::FunctionalAccessor;
 use std::num::NonZero;
 
 pub fn bulkdelete<R: RelationRead + RelationWrite, O: Operator>(

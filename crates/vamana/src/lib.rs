@@ -2,6 +2,7 @@
 
 mod build;
 mod bulkdelete;
+mod candidates;
 mod insert;
 mod maintain;
 mod prune;

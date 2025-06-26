@@ -13,7 +13,7 @@
 // Copyright (c) 2025 TensorChord Inc.
 
 use crate::closure_lifetime_binder::{id_0, id_1};
-use crate::operator::FunctionalAccessor;
+use algo::accessor::FunctionalAccessor;
 use crate::tape::by_next;
 use crate::tuples::{MetaTuple, WithReader};
 use crate::{Opaque, Page, PageGuard, tape};

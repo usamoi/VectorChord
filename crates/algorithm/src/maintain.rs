@@ -13,7 +13,8 @@
 // Copyright (c) 2025 TensorChord Inc.
 
 use crate::closure_lifetime_binder::{id_0, id_1, id_2, id_3};
-use crate::operator::{FunctionalAccessor, Operator, Vector};
+use crate::operator::{ Operator, Vector};
+use algo::accessor::FunctionalAccessor;
 use crate::tape::{self, TapeWriter, by_directory, by_next};
 use crate::tape_writer::{DirectoryTapeWriter, FrozenTapeWriter};
 use crate::tuples::*;

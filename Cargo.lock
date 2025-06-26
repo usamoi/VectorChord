@@ -22,6 +22,10 @@ name = "algo"
 version = "0.0.0"
 dependencies = [
  "always_equal",
+ "distance",
+ "half 2.6.0",
+ "simd",
+ "vector",
  "zerocopy",
 ]
 

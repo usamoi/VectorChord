@@ -26,6 +26,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::num::NonZero;
 use vector::{VectorBorrowed, VectorOwned};
+use algo::accessor::{FunctionalAccessor, LAccess};
 
 type Extra<'b> = &'b mut (u32, u16, f32, &'b mut [u32]);
 

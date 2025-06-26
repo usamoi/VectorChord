@@ -1,14 +1,15 @@
 use crate::Opaque;
+use crate::candidates::Candidates;
 use crate::operator::{Operator, Vector};
 use crate::results::Results;
-use crate::tuples::*;
+use crate::tuples::{Pointer, *};
 use crate::visited::Visited;
+use algo::accessor::{Accessor1, LAccess, LTryAccess, TryAccessor1};
 use algo::prefetcher::{Prefetcher, PrefetcherSequenceFamily};
-use algo::{Page, PageGuard, RelationRead, RelationWrite};
+use algo::{Bump, Page, PageGuard, RelationRead, RelationWrite};
 use always_equal::AlwaysEqual;
-use distance::Distance;
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::VecDeque;
 use std::iter::{repeat, zip};
 use std::num::NonZero;
 use vector::{VectorBorrowed, VectorOwned};
@@ -17,7 +18,9 @@ pub fn insert<'b, R: RelationRead + RelationWrite, O: Operator>(
     index: &'b R,
     vector: <O::Vector as VectorOwned>::Borrowed<'b>,
     payload: NonZero<u64>,
+    bump: &'b impl Bump,
     mut prefetch_vertexs: impl PrefetcherSequenceFamily<'b, R> + 'b,
+    prefetch_vectors: impl PrefetcherSequenceFamily<'b, R> + 'b,
 ) where
     R::Page: Page<Opaque = Opaque>,
 {
@@ -32,52 +35,75 @@ pub fn insert<'b, R: RelationRead + RelationWrite, O: Operator>(
     let alpha = 1.0f32;
     drop(meta_guard);
     let vector_bytes = {
-        let b8_code = O::Vector::b8_code(vector);
-        VectorTuple::serialize(&VectorTuple {
-            metadata: b8_code.0.into_array(),
-            payload: Some(payload),
-            elements: rabitq::b8::binary::pack_code(&b8_code.1),
-            neighbours: vec![Neighbour::NULL; m as usize],
-        })
+        let (mut slices, metadata) = O::Vector::split(vector, m as usize);
+        let last = slices.pop().expect("internal: bad split");
+        slices
+            .iter()
+            .enumerate()
+            .map(|(index, elements)| {
+                VectorTuple::serialize(&VectorTuple::_1 {
+                    elements: elements.to_vec(),
+                    payload: Some(payload),
+                    index: index as u8,
+                })
+            })
+            .chain(std::iter::once(VectorTuple::serialize(&VectorTuple::_0 {
+                metadata,
+                payload: Some(payload),
+                elements: last.to_vec(),
+                neighbours: vec![Neighbour::NULL; m as usize],
+            })))
+            .collect::<Vec<_>>()
     };
     let mut vertex_bytes = {
-        let b1_code = O::Vector::b1_code(vector);
+        let code = O::Vector::code(vector);
         VertexTuple::serialize(&VertexTuple {
-            metadata: b1_code.0.into_array(),
+            metadata: code.0.into_array(),
             payload: Some(payload),
-            elements: rabitq::original::binary::pack_code(&b1_code.1),
-            pointer: Pointer::NULL,
+            elements: rabitq::original::binary::pack_code(&code.1),
+            prefetch: vec![Pointer::NULL; vector_bytes.len()],
         })
     };
     let (vector_pointer, vertex_pointer) =
         if let Some(mut vertex_guard) = index.search(vertex_bytes.len()) {
-            let vector_pointer = {
-                let mut vector_guard = index.write(vertex_guard.get_opaque().link, false);
-                loop {
-                    if let Some(i) = vector_guard.alloc(&vector_bytes) {
-                        break (vector_guard.id(), i);
+            let vector_pointer = vector_bytes
+                .into_iter()
+                .map(|vector_bytes| {
+                    let mut vector_guard = index.write(vertex_guard.get_opaque().link, false);
+                    loop {
+                        if let Some(i) = vector_guard.alloc(&vector_bytes) {
+                            break (vector_guard.id(), i);
+                        }
+                        if vector_guard.get_opaque().next == u32::MAX {
+                            let mut guard = vector_guard;
+                            vector_guard = index.extend(
+                                Opaque {
+                                    next: u32::MAX,
+                                    link: u32::MAX,
+                                },
+                                false,
+                            );
+                            guard.get_opaque_mut().next = vector_guard.id();
+                            drop(guard);
+                            break (
+                                vector_guard.id(),
+                                vector_guard.alloc(&vector_bytes).expect(
+                                    "implementation: a free page cannot accommodate a single tuple",
+                                ),
+                            );
+                        }
+                        vector_guard = index.write(vector_guard.get_opaque().next, false);
                     }
-                    if vector_guard.get_opaque().next == u32::MAX {
-                        vector_guard = index.extend(
-                            Opaque {
-                                next: u32::MAX,
-                                link: u32::MAX,
-                            },
-                            false,
-                        );
-                        break (
-                            vector_guard.id(),
-                            vector_guard.alloc(&vector_bytes).expect(
-                                "implementation: a free page cannot accommodate a single tuple",
-                            ),
-                        );
-                    }
-                    vector_guard = index.write(vector_guard.get_opaque().next, false);
-                }
-            };
+                })
+                .collect::<Vec<_>>();
             {
                 let mut vertex_tuple = VertexTuple::deserialize_mut(&mut vertex_bytes);
-                *vertex_tuple.pointer() = Pointer::new(vector_pointer);
+                vertex_tuple.prefetch().copy_from_slice(
+                    &vector_pointer
+                        .iter()
+                        .map(|&p| Pointer::new(p))
+                        .collect::<Vec<_>>(),
+                );
             }
             let vertex_pointer = {
                 (
@@ -89,33 +115,64 @@ pub fn insert<'b, R: RelationRead + RelationWrite, O: Operator>(
             };
             (vector_pointer, vertex_pointer)
         } else {
-            let vector_pointer = {
-                let mut vector_guard = index.extend(
+            let mut vertex_guard = {
+                let vector_guard = index.extend(
                     Opaque {
                         next: u32::MAX,
                         link: u32::MAX,
                     },
                     false,
                 );
-                (
-                    vector_guard.id(),
-                    vector_guard
-                        .alloc(&vector_bytes)
-                        .expect("implementation: a free page cannot accommodate a single tuple"),
-                )
-            };
-            {
-                let mut vertex_tuple = VertexTuple::deserialize_mut(&mut vertex_bytes);
-                *vertex_tuple.pointer() = Pointer::new(vector_pointer);
-            }
-            let vertex_pointer = {
-                let mut vertex_guard = index.extend(
+                let id = vector_guard.id();
+                drop(vector_guard);
+                index.extend(
                     Opaque {
                         next: u32::MAX,
-                        link: vector_pointer.0,
+                        link: id,
                     },
                     true,
+                )
+            };
+            let vector_pointer = vector_bytes
+                .into_iter()
+                .map(|vector_bytes| {
+                    let mut vector_guard = index.write(vertex_guard.get_opaque().link, false);
+                    loop {
+                        if let Some(i) = vector_guard.alloc(&vector_bytes) {
+                            break (vector_guard.id(), i);
+                        }
+                        if vector_guard.get_opaque().next == u32::MAX {
+                            let mut guard = vector_guard;
+                            vector_guard = index.extend(
+                                Opaque {
+                                    next: u32::MAX,
+                                    link: u32::MAX,
+                                },
+                                false,
+                            );
+                            guard.get_opaque_mut().next = vector_guard.id();
+                            drop(guard);
+                            break (
+                                vector_guard.id(),
+                                vector_guard.alloc(&vector_bytes).expect(
+                                    "implementation: a free page cannot accommodate a single tuple",
+                                ),
+                            );
+                        }
+                        vector_guard = index.write(vector_guard.get_opaque().next, false);
+                    }
+                })
+                .collect::<Vec<_>>();
+            {
+                let mut vertex_tuple = VertexTuple::deserialize_mut(&mut vertex_bytes);
+                vertex_tuple.prefetch().copy_from_slice(
+                    &vector_pointer
+                        .iter()
+                        .map(|&p| Pointer::new(p))
+                        .collect::<Vec<_>>(),
                 );
+            }
+            let vertex_pointer = {
                 (
                     vertex_guard.id(),
                     vertex_guard
@@ -139,10 +196,9 @@ pub fn insert<'b, R: RelationRead + RelationWrite, O: Operator>(
     } else {
         start
     };
-    let vector_lut = O::Vector::b8_preprocess(vector);
-    let vertex_lut = O::Vector::b1_preprocess(vector);
+    let lut = O::Vector::preprocess(vector);
     let mut visited = Visited::new();
-    let mut candidates = BinaryHeap::<(Reverse<Distance>, AlwaysEqual<_>)>::new();
+    let mut candidates = Candidates::new(1, prefetch_vectors);
     let Some(s) = start.into_inner() else {
         return;
     };
@@ -154,34 +210,27 @@ pub fn insert<'b, R: RelationRead + RelationWrite, O: Operator>(
             return;
         };
         let mut vertex_tuple = VertexTuple::deserialize_ref(vertex_bytes);
-        if let Some(pointer_s) = vertex_tuple.pointer().into_inner() {
-            let score_s = O::b1_process(
-                (vertex_tuple.metadata(), vertex_tuple.elements()),
-                &vertex_lut,
-            );
-            candidates.push((Reverse(score_s), AlwaysEqual((pointer_s, s))));
-        }
+        let pointer_s = {
+            let buffer = bump.alloc_slice_default(vertex_tuple.prefetch().len());
+            for (i, x) in vertex_tuple.prefetch().iter().enumerate() {
+                buffer[i] = x.into_inner_unchecked();
+            }
+            buffer
+        };
+        let score_s = O::process((vertex_tuple.metadata(), vertex_tuple.elements()), &lut);
+        candidates.push((Reverse(score_s), AlwaysEqual(pointer_s)));
     }
-    let mut iter = std::iter::from_fn(|| {
-        while let Some((_, AlwaysEqual((pointer_u, u)))) = candidates.pop() {
-            let vector_guard = index.read(pointer_u.0);
-            let Some(vector_bytes) = vector_guard.get(pointer_u.1) else {
+    let mut iter = std::iter::from_fn(move || {
+        while let Some(((_, AlwaysEqual(pointers_u)), guards_u)) = candidates.pop() {
+            let Some((outs_u, payload_u, dis_u)) = read::<R, O, _>(
+                &visited,
+                guards_u.into_iter(),
+                pointers_u,
+                LAccess::new(O::Vector::unpack(vector), O::DistanceAccessor::default()),
+            ) else {
                 // the link is broken
                 continue;
             };
-            let vector_tuple = VectorTuple::deserialize_ref(vector_bytes);
-            let outs_u = vector_tuple
-                .neighbours()
-                .iter()
-                .flat_map(|neighbour| neighbour.into_inner())
-                .map(|(v, _)| v)
-                .filter(|&v| !visited.contains(v))
-                .collect::<VecDeque<_>>();
-            let dis_u = O::b8_process(
-                (vector_tuple.metadata(), vector_tuple.elements()),
-                &vector_lut,
-            );
-            drop(vector_guard);
             let mut iterator = prefetch_vertexs.prefetch(outs_u);
             while let Some((v, guards)) = iterator.next() {
                 visited.insert(v);
@@ -196,15 +245,17 @@ pub fn insert<'b, R: RelationRead + RelationWrite, O: Operator>(
                     continue;
                 };
                 let mut vertex_tuple = VertexTuple::deserialize_ref(vertex_bytes);
-                if let Some(pointer_v) = vertex_tuple.pointer().into_inner() {
-                    let score_v = O::b1_process(
-                        (vertex_tuple.metadata(), vertex_tuple.elements()),
-                        &vertex_lut,
-                    );
-                    candidates.push((Reverse(score_v), AlwaysEqual((pointer_v, v))));
-                }
+                let pointer_v = {
+                    let buffer = bump.alloc_slice_default(vertex_tuple.prefetch().len());
+                    for (i, x) in vertex_tuple.prefetch().iter().enumerate() {
+                        buffer[i] = x.into_inner_unchecked();
+                    }
+                    buffer
+                };
+                let score_v = O::process((vertex_tuple.metadata(), vertex_tuple.elements()), &lut);
+                candidates.push((Reverse(score_v), AlwaysEqual(pointer_v)));
             }
-            return Some((Reverse(dis_u), AlwaysEqual((pointer_u, u))));
+            return Some((Reverse(dis_u), AlwaysEqual(payload_u)));
         }
         None
     });
@@ -273,7 +324,7 @@ pub fn insert<'b, R: RelationRead + RelationWrite, O: Operator>(
             .collect::<Vec<_>>();
         drop(vector_guard); // deadlock
         let outs = crate::prune::robust_prune(
-            |x, y| O::b8_distance((x.0, &x.1), (y.0, &y.1)),
+            |x, y| O::distance((x.0, &x.1), (y.0, &y.1)),
             (pointer_u, u),
             trace
                 .into_iter()
@@ -285,9 +336,12 @@ pub fn insert<'b, R: RelationRead + RelationWrite, O: Operator>(
                         return None;
                     };
                     let mut vertex_tuple = VertexTuple::deserialize_ref(vertex_bytes);
-                    let Some(pointer_u) = vertex_tuple.pointer().into_inner() else {
-                        // the link is broken
-                        return None;
+                    let pointer_u = {
+                        let buffer = bump.alloc_slice_default(vertex_tuple.prefetch().len());
+                        for (i, x) in vertex_tuple.prefetch().iter().enumerate() {
+                            buffer[i] = x.into_inner_unchecked();
+                        }
+                        buffer
                     };
                     Some((Reverse(dis_u), AlwaysEqual((pointer_u, u))))
                 })
@@ -319,4 +373,70 @@ pub fn insert<'b, R: RelationRead + RelationWrite, O: Operator>(
             *hole = fill;
         }
     }
+}
+
+fn read<
+    'r,
+    R: RelationRead + 'r,
+    O: Operator,
+    A: Accessor1<<O::Vector as Vector>::Element, <O::Vector as Vector>::Metadata>,
+>(
+    visited: &Visited,
+    mut guards_u: impl Iterator<Item = R::ReadGuard<'r>>,
+    pointers: &[(u32, u16)],
+    accessor: A,
+) -> Option<(VecDeque<(u32, u16)>, Option<NonZero<u64>>, A::Output)> {
+    assert!(pointers.len() >= 1);
+    let f = pointers.len() - 1;
+    let mut result = accessor;
+    for (index, pointer) in pointers[..f].iter().enumerate() {
+        let vector_guard = guards_u.next().unwrap();
+        let Some(vector_bytes) = vector_guard.get(pointer.1) else {
+            // the link is broken
+            return None;
+        };
+        let vector_tuple = VectorTuple::<O::Vector>::deserialize_ref(vector_bytes);
+        match vector_tuple {
+            VectorTupleReader::_0(_) => {
+                // link is broken
+                return None;
+            }
+            VectorTupleReader::_1(vector_tuple) => {
+                if vector_tuple.index() != index as u8 {
+                    return None;
+                }
+                result.push(vector_tuple.elements());
+            }
+        }
+    }
+    let outs_u;
+    let dis_u;
+    let payload_u;
+    {
+        let vector_guard = guards_u.next().unwrap();
+        let Some(vector_bytes) = vector_guard.get(pointers[f].1) else {
+            // the link is broken
+            return None;
+        };
+        let vector_tuple = VectorTuple::<O::Vector>::deserialize_ref(vector_bytes);
+        match vector_tuple {
+            VectorTupleReader::_0(vector_tuple) => {
+                outs_u = vector_tuple
+                    .neighbours()
+                    .iter()
+                    .flat_map(|neighbour| neighbour.into_inner())
+                    .map(|(v, _)| v)
+                    .filter(|&v| !visited.contains(v))
+                    .collect::<VecDeque<_>>();
+                result.push(vector_tuple.elements());
+                dis_u = result.finish(*vector_tuple.metadata());
+                payload_u = vector_tuple.payload();
+            }
+            VectorTupleReader::_1(_) => {
+                // link is broken
+                return None;
+            }
+        }
+    }
+    Some((outs_u, payload_u, dis_u))
 }

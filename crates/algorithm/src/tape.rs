@@ -12,7 +12,7 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-use crate::operator::Accessor1;
+use algo::accessor::Accessor1;
 use crate::tuples::*;
 use crate::{Opaque, Page, PageGuard, freepages};
 use algo::prefetcher::{Prefetcher, PrefetcherSequenceFamily};

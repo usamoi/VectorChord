@@ -16,6 +16,7 @@ use crate::closure_lifetime_binder::id_4;
 use crate::operator::*;
 use crate::tuples::{MetaTuple, WithReader};
 use crate::{Page, vectors};
+use algo::accessor::{Accessor2, LTryAccess};
 use algo::prefetcher::Prefetcher;
 use algo::{RelationRead, RerankMethod};
 use always_equal::AlwaysEqual;
