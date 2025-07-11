@@ -1,0 +1,24 @@
+[package]
+name = "vchord_vchordg"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+name = "vchord_vchordg"
+crate-type = ["cdylib"]
+
+[dependencies]
+algo = { path = "../algo" }
+vchordg = { path = "../vchordg" }
+vector = { path = "../vector" }
+
+bumpalo.workspace = true
+numpy = { version = "0.25.0" }
+parking_lot = "0.12.4"
+pyo3 = { version = "0.25.1", features = ["extension-module"] }
+rayon = "1.10.0"
+boxcar = "0.2.13"
+
+[lints]
+workspace = true
