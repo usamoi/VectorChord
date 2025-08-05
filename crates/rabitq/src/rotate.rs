@@ -36,7 +36,8 @@ fn kacs_walk(result: &mut [f32]) {
     simd::rotate::givens(l, r);
 }
 
-pub fn rotate(vector: &[f32]) -> Vec<f32> {
+#[expect(dead_code)]
+fn rotate_1(vector: &[f32]) -> Vec<f32> {
     use simd::Floating;
     use std::ops::Bound::{Excluded, Included, Unbounded};
 
@@ -77,4 +78,56 @@ pub fn rotate(vector: &[f32]) -> Vec<f32> {
     }
 
     result
+}
+
+pub fn rotate(vector: &[f32]) -> Vec<f32> {
+    fn random_full_rank_matrix(n: usize) -> nalgebra::DMatrix<f32> {
+        use nalgebra::DMatrix;
+        use rand::{Rng, SeedableRng};
+        use rand_chacha::ChaCha12Rng;
+        use rand_distr::StandardNormal;
+        let mut rng = ChaCha12Rng::from_seed([7; 32]);
+        DMatrix::from_fn(n, n, |_, _| rng.sample(StandardNormal))
+    }
+
+    fn random_orthogonal_matrix(n: usize) -> Vec<Vec<f32>> {
+        use nalgebra::QR;
+        let matrix = random_full_rank_matrix(n);
+        // QR decomposition is unique if the matrix is full rank
+        let qr = QR::new(matrix);
+        let q = qr.q();
+        let mut projection = Vec::new();
+        for row in q.row_iter() {
+            projection.push(row.iter().copied().collect::<Vec<f32>>());
+        }
+        projection
+    }
+
+    use simd::Floating;
+    use std::sync::LazyLock;
+    match vector.len() {
+        768 => {
+            static MATRIX: LazyLock<Vec<Vec<f32>>> =
+                LazyLock::new(|| random_orthogonal_matrix(768));
+            #[ctor::ctor]
+            fn init() {
+                LazyLock::force(&MATRIX);
+            }
+            (0..768)
+                .map(|i| f32::reduce_sum_of_xy(vector, &MATRIX[i]))
+                .collect()
+        }
+        1024 => {
+            static MATRIX: LazyLock<Vec<Vec<f32>>> =
+                LazyLock::new(|| random_orthogonal_matrix(1024));
+            #[ctor::ctor]
+            fn init() {
+                LazyLock::force(&MATRIX);
+            }
+            (0..1024)
+                .map(|i| f32::reduce_sum_of_xy(vector, &MATRIX[i]))
+                .collect()
+        }
+        _ => unimplemented!(),
+    }
 }

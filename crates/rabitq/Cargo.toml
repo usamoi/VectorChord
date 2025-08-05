@@ -7,6 +7,11 @@ publish = false
 [dependencies]
 simd = { path = "../simd" }
 
+ctor = "0.4.3"
+nalgebra = "=0.33.0"
+rand.workspace = true
+rand_chacha.workspace = true
+rand_distr = "0.5.1"
 zerocopy.workspace = true
 
 [build-dependencies]
