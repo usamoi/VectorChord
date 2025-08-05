@@ -17,7 +17,7 @@ pub mod am_build;
 use crate::index::fetcher::*;
 use crate::index::gucs;
 use crate::index::storage::PostgresRelation;
-use crate::index::vchordrq::opclass::{Opfamily, opfamily};
+use crate::index::vchordrq::opclass::opfamily;
 use crate::index::vchordrq::scanners::*;
 use pgrx::datum::Internal;
 use pgrx::pg_sys::Datum;
@@ -150,7 +150,7 @@ pub unsafe extern "C-unwind" fn amoptions(
 
 #[pgrx::pg_guard]
 pub unsafe extern "C-unwind" fn amcostestimate(
-    root: *mut pgrx::pg_sys::PlannerInfo,
+    _root: *mut pgrx::pg_sys::PlannerInfo,
     path: *mut pgrx::pg_sys::IndexPath,
     _loop_count: f64,
     index_startup_cost: *mut pgrx::pg_sys::Cost,
@@ -161,7 +161,6 @@ pub unsafe extern "C-unwind" fn amcostestimate(
 ) {
     unsafe {
         use pgrx::pg_sys::disable_cost;
-        let index_opt_info = (*path).indexinfo;
         // do not use index, if there are no orderbys or clauses
         if ((*path).indexorderbys.is_null() && (*path).indexclauses.is_null())
             || !gucs::vchordrq_enable_scan()
@@ -173,86 +172,9 @@ pub unsafe extern "C-unwind" fn amcostestimate(
             *index_pages = 1.0;
             return;
         }
-        let selectivity = {
-            use pgrx::pg_sys::{
-                JoinType, add_predicate_to_index_quals, clauselist_selectivity,
-                get_quals_from_indexclauses,
-            };
-            let index_quals = get_quals_from_indexclauses((*path).indexclauses);
-            let selectivity_quals = add_predicate_to_index_quals(index_opt_info, index_quals);
-            clauselist_selectivity(
-                root,
-                selectivity_quals,
-                (*(*index_opt_info).rel).relid as _,
-                JoinType::JOIN_INNER,
-                std::ptr::null_mut(),
-            )
-        };
-        // index exists
-        if !(*index_opt_info).hypothetical {
-            let relation = Index::open((*index_opt_info).indexoid, pgrx::pg_sys::NoLock as _);
-            let opfamily = opfamily(relation.raw());
-            if !matches!(
-                opfamily,
-                Opfamily::HalfvecCosine
-                    | Opfamily::HalfvecIp
-                    | Opfamily::HalfvecL2
-                    | Opfamily::VectorCosine
-                    | Opfamily::VectorIp
-                    | Opfamily::VectorL2
-            ) {
-                *index_startup_cost = 0.0;
-                *index_total_cost = 0.0;
-                *index_selectivity = 1.0;
-                *index_correlation = 0.0;
-                *index_pages = 1.0;
-                return;
-            }
-            let index = PostgresRelation::<vchordrq::Opaque>::new(relation.raw());
-            let probes = gucs::vchordrq_probes();
-            let cost = vchordrq::cost(&index);
-            if cost.cells.len() != 1 + probes.len() {
-                panic!(
-                    "need {} probes, but {} probes provided",
-                    cost.cells.len() - 1,
-                    probes.len()
-                );
-            }
-            let node_count = {
-                let tuples = (*index_opt_info).tuples as u32;
-                let mut count = 0.0;
-                let r = cost.cells.iter().copied().rev();
-                let numerator = std::iter::once(1).chain(probes.clone());
-                let denumerator = r.clone();
-                let scale = r.skip(1).chain(std::iter::once(tuples));
-                for (scale, (numerator, denumerator)) in scale.zip(numerator.zip(denumerator)) {
-                    count += (scale as f64) * ((numerator as f64) / (denumerator as f64));
-                }
-                count
-            };
-            let page_count = {
-                let mut pages = 0_f64;
-                pages += 1.0;
-                pages += node_count * cost.dims as f64 / 60000.0;
-                pages += probes.iter().sum::<u32>() as f64 * {
-                    let x = opfamily.vector_kind().element_size() * cost.dims;
-                    x.div_ceil(3840 * x.div_ceil(5120).min(2)) as f64
-                };
-                pages += cost.cells[0] as f64;
-                pages
-            };
-            let next_count =
-                f64::max(1.0, (*root).limit_tuples) * f64::min(1000.0, 1.0 / selectivity);
-            *index_startup_cost = 0.001 * node_count;
-            *index_total_cost = 0.001 * node_count + next_count;
-            *index_selectivity = selectivity;
-            *index_correlation = 0.0;
-            *index_pages = page_count;
-            return;
-        }
         *index_startup_cost = 0.0;
         *index_total_cost = 0.0;
-        *index_selectivity = selectivity;
+        *index_selectivity = 1.0;
         *index_correlation = 0.0;
         *index_pages = 1.0;
     }
@@ -548,29 +470,4 @@ pub struct Scanner {
     pub hack: Option<NonNull<pgrx::pg_sys::IndexScanState>>,
     scanning: LazyCell<Iter, Box<dyn FnOnce() -> Iter>>,
     bump: Box<bumpalo::Bump>,
-}
-
-struct Index {
-    raw: *mut pgrx::pg_sys::RelationData,
-    lockmode: pgrx::pg_sys::LOCKMODE,
-}
-
-impl Index {
-    fn open(indexrelid: pgrx::pg_sys::Oid, lockmode: pgrx::pg_sys::LOCKMASK) -> Self {
-        Self {
-            raw: unsafe { pgrx::pg_sys::index_open(indexrelid, lockmode) },
-            lockmode,
-        }
-    }
-    fn raw(&self) -> *mut pgrx::pg_sys::RelationData {
-        self.raw
-    }
-}
-
-impl Drop for Index {
-    fn drop(&mut self) {
-        unsafe {
-            pgrx::pg_sys::index_close(self.raw, self.lockmode);
-        }
-    }
 }
