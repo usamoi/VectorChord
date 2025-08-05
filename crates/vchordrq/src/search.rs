@@ -56,6 +56,7 @@ where
             probes.len()
         );
     }
+    let epsilon_ = 1.9;
 
     type State = Vec<(Reverse<Distance>, AlwaysEqual<f32>, AlwaysEqual<u32>)>;
     let mut state: State = if !is_residual {
@@ -92,7 +93,7 @@ where
                 by_next(index, first),
                 || O::block_access(&lut.0, process),
                 |(rough, err), head, norm, first, prefetch| {
-                    let lowerbound = Distance::from_f32(rough - err * epsilon);
+                    let lowerbound = Distance::from_f32(rough - err * epsilon_);
                     results.push((
                         Reverse(lowerbound),
                         AlwaysEqual(bump.alloc((first, head, norm, bump.alloc_slice(prefetch)))),
@@ -196,6 +197,7 @@ where
             probes.len()
         );
     }
+    let epsilon_ = 1.9;
 
     type State = Vec<(Reverse<Distance>, AlwaysEqual<f32>, AlwaysEqual<u32>)>;
     let mut state: State = if !is_residual {
@@ -232,7 +234,7 @@ where
                 by_next(index, first),
                 || O::block_access(&lut.0, process),
                 |(rough, err), head, norm, first, prefetch| {
-                    let lowerbound = Distance::from_f32(rough - err * epsilon);
+                    let lowerbound = Distance::from_f32(rough - err * epsilon_);
                     results.push((
                         Reverse(lowerbound),
                         AlwaysEqual(bump.alloc((first, head, norm, bump.alloc_slice(prefetch)))),
