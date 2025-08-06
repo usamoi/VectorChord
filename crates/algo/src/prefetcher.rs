@@ -68,7 +68,7 @@ where
 
     fn next(&mut self) -> Option<(Self::Item, PlainPrefetcherGuards<'r, R>)> {
         let e = self.sequence.next()?;
-        let list = e.fetch().into_iter();
+        let list = e.fetch();
         Some((
             e,
             PlainPrefetcherGuards {
@@ -86,7 +86,7 @@ where
             return None;
         }
         let e = self.sequence.next()?;
-        let list = e.fetch().into_iter();
+        let list = e.fetch();
         Some((
             e,
             PlainPrefetcherGuards {
@@ -99,7 +99,7 @@ where
 
 pub struct PlainPrefetcherGuards<'r, R> {
     relation: &'r R,
-    list: std::vec::IntoIter<u32>,
+    list: crate::OwnedIter,
 }
 
 impl<'r, R: RelationRead> Iterator for PlainPrefetcherGuards<'r, R> {
@@ -155,13 +155,13 @@ where
         while self.window.len() < WINDOW_SIZE
             && let Some(e) = self.sequence.next()
         {
-            for id in e.fetch().into_iter() {
+            for id in e.fetch() {
                 self.relation.prefetch(id);
             }
             self.window.push_back(e);
         }
         let e = self.window.pop_front()?;
-        let list = e.fetch().into_iter();
+        let list = e.fetch();
         Some((
             e,
             SimplePrefetcherGuards {
@@ -177,13 +177,13 @@ where
         while self.window.len() < WINDOW_SIZE
             && let Some(e) = self.sequence.next()
         {
-            for id in e.fetch().into_iter() {
+            for id in e.fetch() {
                 self.relation.prefetch(id);
             }
             self.window.push_back(e);
         }
         let e = vec_deque_pop_front_if(&mut self.window, predicate)?;
-        let list = e.fetch().into_iter();
+        let list = e.fetch();
         Some((
             e,
             SimplePrefetcherGuards {
@@ -196,7 +196,7 @@ where
 
 pub struct SimplePrefetcherGuards<'r, R> {
     relation: &'r R,
-    list: std::vec::IntoIter<u32>,
+    list: crate::OwnedIter,
 }
 
 impl<'r, R: RelationRead> Iterator for SimplePrefetcherGuards<'r, R> {
