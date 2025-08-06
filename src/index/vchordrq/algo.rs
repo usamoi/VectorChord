@@ -31,7 +31,7 @@ where
     R: RelationRead,
     R::Page: Page<Opaque = Opaque>,
 {
-    let bump = bumpalo::Bump::new();
+    let bump = bumpalo::Bump::with_capacity(2 << 20);
     let make_h0_plain_prefetcher = MakeH0PlainPrefetcher { index };
     match (opfamily.vector_kind(), opfamily.distance_kind()) {
         (VectorKind::Vecf32, DistanceKind::L2S) => vchordrq::prewarm::<_, Op<VectOwned<f32>, L2S>>(
@@ -171,7 +171,7 @@ pub fn insert<R>(
     R: RelationRead + RelationWrite,
     R::Page: Page<Opaque = Opaque>,
 {
-    let bump = bumpalo::Bump::new();
+    let bump = bumpalo::Bump::with_capacity(2 << 20);
     let make_h1_plain_prefetcher = MakeH1PlainPrefetcherForInsertion { index };
     match (vector, opfamily.distance_kind()) {
         (OwnedVector::Vecf32(vector), DistanceKind::L2S) => {
