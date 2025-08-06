@@ -12,6 +12,9 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
+#![allow(dead_code)]
+#![allow(unused)]
+
 use pgrx::pg_sys::{BlockIdData, Datum, ItemPointerData};
 use std::cell::LazyCell;
 use std::num::NonZero;

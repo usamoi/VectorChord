@@ -49,11 +49,9 @@ where
 }
 
 #[inline(always)]
-pub fn id_4<'r, F, P, A, B, R: ?Sized>(f: F) -> F
+pub fn id_4<F, A, B, R: ?Sized>(f: F) -> F
 where
-    P: algo::prefetcher::Prefetcher<'r>,
-    <P as IntoIterator>::Item: algo::Fetch,
-    F: FnMut(A, P::Guards, B) -> R,
+    F: FnMut(A, &[u32], B) -> R,
 {
     f
 }
