@@ -18,6 +18,7 @@ use crate::operator::*;
 use crate::tape::{by_directory, by_next};
 use crate::tuples::*;
 use crate::{Opaque, Page, tape, vectors};
+use algo::OwnedIter;
 use algo::accessor::LAccess;
 use algo::prefetcher::{Prefetcher, PrefetcherHeapFamily, PrefetcherSequenceFamily};
 use algo::{Bump, RelationRead};
@@ -28,7 +29,7 @@ use std::collections::BinaryHeap;
 use std::num::NonZero;
 use vector::{VectorBorrowed, VectorOwned};
 
-type Extra<'b> = &'b mut (NonZero<u64>, u16, &'b mut [u32]);
+type Extra<'b> = &'b mut (NonZero<u64>, u16, OwnedIter);
 
 pub fn default_search<'r, 'b: 'r, R: RelationRead, O: Operator>(
     index: &'r R,
@@ -67,12 +68,12 @@ where
             AlwaysEqual(first),
         )]
     } else {
-        let prefetch = bump.alloc_slice(meta_tuple.centroid_prefetch());
+        let prefetch = OwnedIter::from_slice(meta_tuple.centroid_prefetch());
         let head = meta_tuple.centroid_head();
         let norm = meta_tuple.centroid_norm();
         let first = meta_tuple.first();
         let distance = vectors::read_for_h1_tuple::<R, O, _>(
-            prefetch.iter().map(|&id| index.read(id)),
+            prefetch.map(|id| index.read(id)),
             head,
             LAccess::new(O::Vector::unpack(vector), O::DistanceAccessor::default()),
         );
@@ -92,7 +93,12 @@ where
                     let lowerbound = Distance::from_f32(rough - err * epsilon);
                     results.push((
                         Reverse(lowerbound),
-                        AlwaysEqual(bump.alloc((first, head, norm, bump.alloc_slice(prefetch)))),
+                        AlwaysEqual(bump.alloc((
+                            first,
+                            head,
+                            norm,
+                            OwnedIter::from_slice(prefetch),
+                        ))),
                     ));
                 },
             );
@@ -127,7 +133,7 @@ where
             let lowerbound = Distance::from_f32(rough - err * epsilon);
             results.push((
                 (Reverse(lowerbound), AlwaysEqual(())),
-                AlwaysEqual(bump.alloc((payload, head, bump.alloc_slice(prefetch)))),
+                AlwaysEqual(bump.alloc((payload, head, OwnedIter::from_slice(prefetch)))),
             ));
         });
         if prefetch_h0_tuples.is_not_plain() {
@@ -198,12 +204,12 @@ where
             AlwaysEqual(first),
         )]
     } else {
-        let prefetch = bump.alloc_slice(meta_tuple.centroid_prefetch());
+        let prefetch = OwnedIter::from_slice(meta_tuple.centroid_prefetch());
         let head = meta_tuple.centroid_head();
         let norm = meta_tuple.centroid_norm();
         let first = meta_tuple.first();
         let distance = vectors::read_for_h1_tuple::<R, O, _>(
-            prefetch.iter().map(|&id| index.read(id)),
+            prefetch.map(|id| index.read(id)),
             head,
             LAccess::new(O::Vector::unpack(vector), O::DistanceAccessor::default()),
         );
@@ -223,7 +229,12 @@ where
                     let lowerbound = Distance::from_f32(rough - err * epsilon);
                     results.push((
                         Reverse(lowerbound),
-                        AlwaysEqual(bump.alloc((first, head, norm, bump.alloc_slice(prefetch)))),
+                        AlwaysEqual(bump.alloc((
+                            first,
+                            head,
+                            norm,
+                            OwnedIter::from_slice(prefetch),
+                        ))),
                     ));
                 },
             );
@@ -261,7 +272,7 @@ where
             let rough = Distance::from_f32(rough);
             results.push((
                 (Reverse(lowerbound), AlwaysEqual(rough)),
-                AlwaysEqual(bump.alloc((payload, head, bump.alloc_slice(prefetch)))),
+                AlwaysEqual(bump.alloc((payload, head, OwnedIter::from_slice(prefetch)))),
             ));
         });
         if prefetch_h0_tuples.is_not_plain() {

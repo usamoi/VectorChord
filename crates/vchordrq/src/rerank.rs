@@ -27,7 +27,7 @@ use std::marker::PhantomData;
 use std::num::NonZero;
 use vector::VectorOwned;
 
-type Extra<'b> = &'b mut (NonZero<u64>, u16, &'b mut [u32]);
+type Extra<'b> = &'b mut (NonZero<u64>, u16, algo::OwnedIter);
 
 type Result = (Reverse<Distance>, AlwaysEqual<NonZero<u64>>);
 

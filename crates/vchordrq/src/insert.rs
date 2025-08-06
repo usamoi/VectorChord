@@ -20,7 +20,7 @@ use crate::vectors::{self};
 use crate::{Opaque, Page, tape};
 use algo::accessor::{FunctionalAccessor, LAccess};
 use algo::prefetcher::{Prefetcher, PrefetcherHeapFamily};
-use algo::{Bump, RelationRead, RelationWrite};
+use algo::{Bump, OwnedIter, RelationRead, RelationWrite};
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use std::cmp::Reverse;
@@ -28,7 +28,7 @@ use std::collections::BinaryHeap;
 use std::num::NonZero;
 use vector::{VectorBorrowed, VectorOwned};
 
-type Extra<'b> = &'b mut (u32, u16, f32, &'b mut [u32]);
+type Extra<'b> = &'b mut (u32, u16, f32, OwnedIter);
 
 pub fn insert_vector<R: RelationRead + RelationWrite, O: Operator>(
     index: &R,
@@ -86,12 +86,12 @@ pub fn insert<'r, 'b: 'r, R: RelationRead + RelationWrite, O: Operator>(
             AlwaysEqual(first),
         )
     } else {
-        let prefetch = bump.alloc_slice(meta_tuple.centroid_prefetch());
+        let prefetch = OwnedIter::from_slice(meta_tuple.centroid_prefetch());
         let head = meta_tuple.centroid_head();
         let norm = meta_tuple.centroid_norm();
         let first = meta_tuple.first();
         let distance = vectors::read_for_h1_tuple::<R, O, _>(
-            prefetch.iter().map(|&id| index.read(id)),
+            prefetch.map(|id| index.read(id)),
             head,
             LAccess::new(O::Vector::unpack(vector), O::DistanceAccessor::default()),
         );
@@ -112,7 +112,12 @@ pub fn insert<'r, 'b: 'r, R: RelationRead + RelationWrite, O: Operator>(
                     let lowerbound = Distance::from_f32(rough - err * epsilon);
                     results.push((
                         Reverse(lowerbound),
-                        AlwaysEqual(bump.alloc((first, head, norm, bump.alloc_slice(prefetch)))),
+                        AlwaysEqual(bump.alloc((
+                            first,
+                            head,
+                            norm,
+                            OwnedIter::from_slice(prefetch),
+                        ))),
                     ));
                 },
             );
