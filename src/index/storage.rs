@@ -423,7 +423,7 @@ where
             && let Some(iter) = self.iter.as_mut()
             && let Some(e) = iter.next()
         {
-            for id in e.fetch().iter().copied() {
+            for id in e.fetch() {
                 self.tail.push_back(id);
             }
             self.window.push_back(e);
@@ -436,7 +436,7 @@ where
             && let Some(iter) = self.iter.as_mut()
             && let Some(e) = iter.next()
         {
-            for id in e.fetch().iter().copied() {
+            for id in e.fetch() {
                 self.tail.push_back(id);
             }
             self.window.push_back(e);
@@ -449,7 +449,7 @@ where
             && let Some(iter) = self.iter.as_mut()
             && let Some(e) = iter.next()
         {
-            for id in e.fetch().iter().copied() {
+            for id in e.fetch() {
                 self.tail.push_back(id);
             }
             self.window.push_back(e);
@@ -532,7 +532,7 @@ where
 {
     type Relation = PostgresRelation<O>;
 
-    type Guards = PostgresReadStreamGuards<O, I, std::vec::IntoIter<u32>>;
+    type Guards = PostgresReadStreamGuards<O, I, sbsii::IntoIter<u32, SMALL>>;
 
     type Item = I::Item;
 
