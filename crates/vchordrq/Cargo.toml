@@ -9,6 +9,7 @@ algo = { path = "../algo" }
 always_equal = { path = "../always_equal" }
 distance = { path = "../distance" }
 rabitq = { path = "../rabitq" }
+sbsii = { path = "../sbsii" }
 simd = { path = "../simd" }
 vector = { path = "../vector" }
 

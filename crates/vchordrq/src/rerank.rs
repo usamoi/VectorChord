@@ -18,7 +18,7 @@ use crate::tuples::{MetaTuple, WithReader};
 use crate::{Page, vectors};
 use algo::accessor::{Accessor2, LTryAccess};
 use algo::prefetcher::Prefetcher;
-use algo::{RelationRead, RerankMethod};
+use algo::{RelationRead, RerankMethod, SMALL};
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use std::cmp::Reverse;
@@ -27,7 +27,7 @@ use std::marker::PhantomData;
 use std::num::NonZero;
 use vector::VectorOwned;
 
-type Extra<'b> = &'b mut (NonZero<u64>, u16, &'b mut [u32]);
+type Extra<'b> = &'b mut (NonZero<u64>, u16, sbsii::IntoIter<u32, SMALL>);
 
 type Result = (Reverse<Distance>, AlwaysEqual<NonZero<u64>>);
 

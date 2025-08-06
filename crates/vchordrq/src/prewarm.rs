@@ -19,13 +19,12 @@ use crate::tuples::*;
 use crate::{Opaque, Page, tape, vectors};
 use algo::accessor::FunctionalAccessor;
 use algo::prefetcher::PrefetcherSequenceFamily;
-use algo::{Bump, RelationRead};
+use algo::{RelationRead, SMALL};
 use std::fmt::Write;
 
-pub fn prewarm<'r, 'b: 'r, R: RelationRead, O: Operator>(
+pub fn prewarm<'r, R: RelationRead, O: Operator>(
     index: &'r R,
     height: i32,
-    bump: &'b impl Bump,
     mut prefetch_h0_tuples: impl PrefetcherSequenceFamily<'r, R>,
 ) -> String
 where
@@ -46,10 +45,10 @@ where
     type State = Vec<u32>;
     let mut state: State = {
         let mut results = Vec::new();
-        let prefetch = bump.alloc_slice(meta_tuple.centroid_prefetch());
+        let prefetch = sbsii::IntoIter::<u32, SMALL>::from_slice(meta_tuple.centroid_prefetch());
         let head = meta_tuple.centroid_head();
         let first = meta_tuple.first();
-        vectors::read_for_h1_tuple::<R, O, _>(prefetch.iter().map(|&id| index.read(id)), head, ());
+        vectors::read_for_h1_tuple::<R, O, _>(prefetch.map(|id| index.read(id)), head, ());
         results.push(first);
         writeln!(message, "------------------------").unwrap();
         writeln!(message, "number of nodes: {}", results.len()).unwrap();
