@@ -532,7 +532,7 @@ where
 {
     type Relation = PostgresRelation<O>;
 
-    type Guards = PostgresReadStreamGuards<O, I, std::vec::IntoIter<u32>>;
+    type Guards = PostgresReadStreamGuards<O, I, smallvec::IntoIter<[u32; SMALL]>>;
 
     type Item = I::Item;
 

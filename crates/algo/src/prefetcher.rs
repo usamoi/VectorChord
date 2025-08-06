@@ -99,7 +99,7 @@ where
 
 pub struct PlainPrefetcherGuards<'r, R> {
     relation: &'r R,
-    list: std::vec::IntoIter<u32>,
+    list: smallvec::IntoIter<[u32; crate::SMALL]>,
 }
 
 impl<'r, R: RelationRead> Iterator for PlainPrefetcherGuards<'r, R> {
@@ -196,7 +196,7 @@ where
 
 pub struct SimplePrefetcherGuards<'r, R> {
     relation: &'r R,
-    list: std::vec::IntoIter<u32>,
+    list: smallvec::IntoIter<[u32; crate::SMALL]>,
 }
 
 impl<'r, R: RelationRead> Iterator for SimplePrefetcherGuards<'r, R> {

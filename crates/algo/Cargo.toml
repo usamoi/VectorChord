@@ -12,6 +12,7 @@ vector = { path = "../vector" }
 
 bumpalo.workspace = true
 half.workspace = true
+smallvec.workspace = true
 zerocopy.workspace = true
 
 [lints]

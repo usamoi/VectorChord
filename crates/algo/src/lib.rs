@@ -153,47 +153,55 @@ impl Bump for bumpalo::Bump {
     }
 }
 
+pub const SMALL: usize = 4;
+
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(size_of::<smallvec::SmallVec<[u32; SMALL]>>() == 24);
+    assert!(size_of::<smallvec::IntoIter<[u32; SMALL]>>() == 40)
+};
+
 pub trait Fetch {
-    fn fetch(&self) -> Vec<u32>;
+    fn fetch(&self) -> smallvec::SmallVec<[u32; SMALL]>;
 }
 
 impl Fetch for u32 {
-    fn fetch(&self) -> Vec<u32> {
-        std::slice::from_ref(self).to_vec()
+    fn fetch(&self) -> smallvec::SmallVec<[u32; SMALL]> {
+        smallvec::smallvec![*self]
     }
 }
 
 impl<'b, T, A, B> Fetch for (T, AlwaysEqual<&'b mut (A, B, &'b mut [u32])>) {
-    fn fetch(&self) -> Vec<u32> {
+    fn fetch(&self) -> smallvec::SmallVec<[u32; SMALL]> {
         let (_, AlwaysEqual((.., list))) = self;
-        list.to_vec()
+        smallvec::SmallVec::from_slice(list)
     }
 }
 
 impl<'b, T, A, B, C> Fetch for (T, AlwaysEqual<&'b mut (A, B, C, &'b mut [u32])>) {
-    fn fetch(&self) -> Vec<u32> {
+    fn fetch(&self) -> smallvec::SmallVec<[u32; SMALL]> {
         let (_, AlwaysEqual((.., list))) = self;
-        list.to_vec()
+        smallvec::SmallVec::from_slice(list)
     }
 }
 
 impl<T> Fetch for (T, AlwaysEqual<(u32, u16)>) {
-    fn fetch(&self) -> Vec<u32> {
+    fn fetch(&self) -> smallvec::SmallVec<[u32; SMALL]> {
         let (_, AlwaysEqual((x, _))) = self;
-        std::slice::from_ref(x).to_vec()
+        smallvec::smallvec![*x]
     }
 }
 
 impl Fetch for (u32, u16) {
-    fn fetch(&self) -> Vec<u32> {
-        std::slice::from_ref(&self.0).to_vec()
+    fn fetch(&self) -> smallvec::SmallVec<[u32; SMALL]> {
+        smallvec::smallvec![self.0]
     }
 }
 
 impl<T> Fetch for (T, AlwaysEqual<((u32, u16), (u32, u16))>) {
-    fn fetch(&self) -> Vec<u32> {
+    fn fetch(&self) -> smallvec::SmallVec<[u32; SMALL]> {
         let (_, AlwaysEqual(((x, _), _))) = self;
-        std::slice::from_ref(x).to_vec()
+        smallvec::smallvec![*x]
     }
 }
 
@@ -202,13 +210,13 @@ pub trait Fetch1 {
 }
 
 impl<T, F: Fetch1> Fetch for (T, AlwaysEqual<&mut [F]>) {
-    fn fetch(&self) -> Vec<u32> {
+    fn fetch(&self) -> smallvec::SmallVec<[u32; SMALL]> {
         self.1.0.iter().map(|x| x.fetch_1()).collect()
     }
 }
 
 impl<T, U, F: Fetch1> Fetch for (T, AlwaysEqual<(&mut [F], U)>) {
-    fn fetch(&self) -> Vec<u32> {
+    fn fetch(&self) -> smallvec::SmallVec<[u32; SMALL]> {
         self.1.0.0.iter().map(|x| x.fetch_1()).collect()
     }
 }
