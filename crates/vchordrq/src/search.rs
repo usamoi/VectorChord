@@ -29,17 +29,17 @@ use std::collections::BinaryHeap;
 use std::num::NonZero;
 use vector::{VectorBorrowed, VectorOwned};
 
-type Extra<'b> = &'b mut (NonZero<u64>, u16, OwnedIter);
+type Extra = (NonZero<u64>, u16, OwnedIter);
 
 pub fn default_search<'r, 'b: 'r, R: RelationRead, O: Operator>(
     index: &'r R,
     vector: <O::Vector as VectorOwned>::Borrowed<'_>,
     probes: Vec<u32>,
     epsilon: f32,
-    bump: &'b impl Bump,
+    _bump: &'b impl Bump,
     mut prefetch_h1_vectors: impl PrefetcherHeapFamily<'r, R>,
     mut prefetch_h0_tuples: impl PrefetcherSequenceFamily<'r, R>,
-) -> Vec<((Reverse<Distance>, AlwaysEqual<()>), AlwaysEqual<Extra<'b>>)>
+) -> Vec<((Reverse<Distance>, AlwaysEqual<()>), AlwaysEqual<Extra>)>
 where
     R::Page: Page<Opaque = Opaque>,
 {
@@ -93,12 +93,7 @@ where
                     let lowerbound = Distance::from_f32(rough - err * epsilon);
                     results.push((
                         Reverse(lowerbound),
-                        AlwaysEqual(bump.alloc((
-                            first,
-                            head,
-                            norm,
-                            OwnedIter::from_slice(prefetch),
-                        ))),
+                        AlwaysEqual((first, head, norm, OwnedIter::from_slice(prefetch))),
                     ));
                 },
             );
@@ -106,7 +101,7 @@ where
         let mut heap = prefetch_h1_vectors.prefetch(results.into_vec());
         let mut cache = BinaryHeap::<(_, _, _)>::new();
         std::iter::from_fn(move || {
-            while let Some(((Reverse(_), AlwaysEqual(&mut (first, head, norm, ..))), prefetch)) =
+            while let Some(((Reverse(_), AlwaysEqual((first, head, norm, ..))), prefetch)) =
                 heap.next_if(|(d, _)| Some(*d) > cache.peek().map(|(d, ..)| *d))
             {
                 let distance = vectors::read_for_h1_tuple::<R, O, _>(
@@ -133,7 +128,7 @@ where
             let lowerbound = Distance::from_f32(rough - err * epsilon);
             results.push((
                 (Reverse(lowerbound), AlwaysEqual(())),
-                AlwaysEqual(bump.alloc((payload, head, OwnedIter::from_slice(prefetch)))),
+                AlwaysEqual((payload, head, OwnedIter::from_slice(prefetch))),
             ));
         });
         if prefetch_h0_tuples.is_not_plain() {
@@ -166,13 +161,13 @@ pub fn maxsim_search<'r, 'b: 'r, R: RelationRead, O: Operator>(
     probes: Vec<u32>,
     epsilon: f32,
     mut threshold: u32,
-    bump: &'b impl Bump,
+    _bump: &'b impl Bump,
     mut prefetch_h1_vectors: impl PrefetcherHeapFamily<'r, R>,
     mut prefetch_h0_tuples: impl PrefetcherSequenceFamily<'r, R>,
 ) -> (
     Vec<(
         (Reverse<Distance>, AlwaysEqual<Distance>),
-        AlwaysEqual<Extra<'b>>,
+        AlwaysEqual<Extra>,
     )>,
     Distance,
 )
@@ -229,12 +224,7 @@ where
                     let lowerbound = Distance::from_f32(rough - err * epsilon);
                     results.push((
                         Reverse(lowerbound),
-                        AlwaysEqual(bump.alloc((
-                            first,
-                            head,
-                            norm,
-                            OwnedIter::from_slice(prefetch),
-                        ))),
+                        AlwaysEqual((first, head, norm, OwnedIter::from_slice(prefetch))),
                     ));
                 },
             );
@@ -242,7 +232,7 @@ where
         let mut heap = prefetch_h1_vectors.prefetch(results.into_vec());
         let mut cache = BinaryHeap::<(_, _, _)>::new();
         std::iter::from_fn(move || {
-            while let Some(((Reverse(_), AlwaysEqual(&mut (first, head, norm, ..))), prefetch)) =
+            while let Some(((Reverse(_), AlwaysEqual((first, head, norm, ..))), prefetch)) =
                 heap.next_if(|(d, _)| Some(*d) > cache.peek().map(|(d, ..)| *d))
             {
                 let distance = vectors::read_for_h1_tuple::<R, O, _>(
@@ -272,7 +262,7 @@ where
             let rough = Distance::from_f32(rough);
             results.push((
                 (Reverse(lowerbound), AlwaysEqual(rough)),
-                AlwaysEqual(bump.alloc((payload, head, OwnedIter::from_slice(prefetch)))),
+                AlwaysEqual((payload, head, OwnedIter::from_slice(prefetch))),
             ));
         });
         if prefetch_h0_tuples.is_not_plain() {

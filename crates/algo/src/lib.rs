@@ -166,14 +166,14 @@ impl Fetch for u32 {
     }
 }
 
-impl<T, A, B> Fetch for (T, AlwaysEqual<&mut (A, B, OwnedIter)>) {
+impl<T, A, B> Fetch for (T, AlwaysEqual<(A, B, OwnedIter)>) {
     fn fetch(&self) -> OwnedIter {
         let (_, AlwaysEqual((.., list))) = self;
         list.clone()
     }
 }
 
-impl<T, A, B, C> Fetch for (T, AlwaysEqual<&mut (A, B, C, OwnedIter)>) {
+impl<T, A, B, C> Fetch for (T, AlwaysEqual<(A, B, C, OwnedIter)>) {
     fn fetch(&self) -> OwnedIter {
         let (_, AlwaysEqual((.., list))) = self;
         list.clone()
