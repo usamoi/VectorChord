@@ -151,7 +151,7 @@ impl<T: Copy, const N: usize> ExactSizeIterator for IntoIter<T, N> {}
 
 #[cfg(target_pointer_width = "64")]
 const _: () = {
-    assert!(size_of::<IntoIter::<u32, 1>>() == 16);
+    assert!(size_of::<IntoIter::<u32, 4>>() == 24);
 };
 
 #[test]
