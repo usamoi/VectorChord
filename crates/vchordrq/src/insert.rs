@@ -28,7 +28,7 @@ use std::collections::BinaryHeap;
 use std::num::NonZero;
 use vector::{VectorBorrowed, VectorOwned};
 
-type Extra1<'b> = &'b mut (u32, u16, f32, OwnedIter);
+type Extra1<'b> = (u32, u16, f32, u32);
 
 pub fn insert_vector<R: RelationRead + RelationWrite, O: Operator>(
     index: &R,
@@ -60,7 +60,7 @@ pub fn insert<'r, 'b: 'r, R: RelationRead + RelationWrite, O: Operator>(
     payload: NonZero<u64>,
     vector: <O::Vector as VectorOwned>::Borrowed<'_>,
     key: (Vec<u32>, u16),
-    bump: &'b impl Bump,
+    _bump: &'b impl Bump,
     mut prefetch_h1_vectors: impl PrefetcherHeapFamily<'r, R>,
     skip_freespaces: bool,
 ) where
@@ -112,12 +112,7 @@ pub fn insert<'r, 'b: 'r, R: RelationRead + RelationWrite, O: Operator>(
                     let lowerbound = Distance::from_f32(rough - err * epsilon);
                     results.push((
                         Reverse(lowerbound),
-                        AlwaysEqual(bump.alloc((
-                            first,
-                            head,
-                            norm,
-                            OwnedIter::from_slice(prefetch),
-                        ))),
+                        AlwaysEqual((first, head, norm, prefetch[0])),
                     ));
                 },
             );
@@ -125,7 +120,7 @@ pub fn insert<'r, 'b: 'r, R: RelationRead + RelationWrite, O: Operator>(
         let mut heap = prefetch_h1_vectors.prefetch(results.into_vec());
         let mut cache = BinaryHeap::<(_, _, _)>::new();
         {
-            while let Some(((Reverse(_), AlwaysEqual(&mut (first, head, norm, ..))), prefetch)) =
+            while let Some(((Reverse(_), AlwaysEqual((first, head, norm, ..))), prefetch)) =
                 heap.next_if(|(d, _)| Some(*d) > cache.peek().map(|(d, ..)| *d))
             {
                 let distance = vectors::read_for_h1_tuple::<R, O, _>(

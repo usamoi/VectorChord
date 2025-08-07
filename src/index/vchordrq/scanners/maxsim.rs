@@ -102,9 +102,9 @@ impl SearchBuilder for MaxsimBuilder {
         };
         let n = vectors.len();
         let accu_map = |(Reverse(distance), AlwaysEqual(payload))| (distance, payload);
-        let rough_map = |((_, AlwaysEqual(rough)), AlwaysEqual(&mut (payload, ..))): (
+        let rough_map = |((_, AlwaysEqual(rough)), AlwaysEqual((payload, ..))): (
             _,
-            AlwaysEqual<&mut (NonZero<u64>, _, _)>,
+            AlwaysEqual<(NonZero<u64>, _, _)>,
         )| (rough, payload);
         let iter: Box<dyn Iterator<Item = _>> = match opfamily.vector_kind() {
             VectorKind::Vecf32 => {
@@ -486,7 +486,7 @@ impl<T: Ord> std::iter::FusedIterator for IntoIterSorted<T> {}
 #[inline(always)]
 pub fn id_0<F, A: ?Sized, B: ?Sized, C: ?Sized, D: ?Sized, R: ?Sized>(f: F) -> F
 where
-    F: for<'a> FnMut(&(A, AlwaysEqual<&'a mut (B, C, D)>)) -> R,
+    F: FnMut(&(A, AlwaysEqual<(B, C, D)>)) -> R,
 {
     f
 }

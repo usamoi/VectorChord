@@ -173,10 +173,24 @@ impl<T, A, B> Fetch for (T, AlwaysEqual<&mut (A, B, OwnedIter)>) {
     }
 }
 
+impl<T, A, B> Fetch for (T, AlwaysEqual<(A, B, u32)>) {
+    fn fetch(&self) -> OwnedIter {
+        let (_, AlwaysEqual((.., list))) = self;
+        OwnedIter::from_slice(std::slice::from_ref(list))
+    }
+}
+
 impl<T, A, B, C> Fetch for (T, AlwaysEqual<&mut (A, B, C, OwnedIter)>) {
     fn fetch(&self) -> OwnedIter {
         let (_, AlwaysEqual((.., list))) = self;
         list.clone()
+    }
+}
+
+impl<T, A, B, C> Fetch for (T, AlwaysEqual<(A, B, C, u32)>) {
+    fn fetch(&self) -> OwnedIter {
+        let (_, AlwaysEqual((.., list))) = self;
+        OwnedIter::from_slice(std::slice::from_ref(list))
     }
 }
 

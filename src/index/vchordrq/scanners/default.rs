@@ -665,7 +665,7 @@ impl SearchBuilder for DefaultBuilder {
 #[inline(always)]
 pub fn id_0<F, A: ?Sized, B: ?Sized, C: ?Sized, D: ?Sized, R: ?Sized>(f: F) -> F
 where
-    F: for<'a> FnMut(&(A, AlwaysEqual<&'a mut (B, C, D)>)) -> R,
+    F: FnMut(&(A, AlwaysEqual<(B, C, D)>)) -> R,
 {
     f
 }

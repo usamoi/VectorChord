@@ -27,7 +27,7 @@ use std::marker::PhantomData;
 use std::num::NonZero;
 use vector::VectorOwned;
 
-type Extra0<'b> = &'b mut (NonZero<u64>, u16, algo::OwnedIter);
+type Extra0<'b> = (NonZero<u64>, u16, u32);
 
 type Result = (Reverse<Distance>, AlwaysEqual<NonZero<u64>>);
 
@@ -58,7 +58,7 @@ where
     type Item = (Distance, NonZero<u64>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(((_, AlwaysEqual(&mut (payload, head, ..))), prefetch)) = self
+        while let Some(((_, AlwaysEqual((payload, head, ..))), prefetch)) = self
             .prefetcher
             .next_if(|((d, _), ..)| Some(*d) > self.cache.peek().map(|(d, ..)| *d))
         {
