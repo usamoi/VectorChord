@@ -18,10 +18,9 @@ use crate::operator::*;
 use crate::tape::{by_directory, by_next};
 use crate::tuples::*;
 use crate::{Opaque, Page, tape, vectors};
-use algo::OwnedIter;
 use algo::accessor::LAccess;
 use algo::prefetcher::{Prefetcher, PrefetcherHeapFamily, PrefetcherSequenceFamily};
-use algo::{Bump, RelationRead};
+use algo::{Bump, OwnedIter, RelationRead};
 use always_equal::AlwaysEqual;
 use distance::Distance;
 use std::cmp::Reverse;
@@ -29,8 +28,8 @@ use std::collections::BinaryHeap;
 use std::num::NonZero;
 use vector::{VectorBorrowed, VectorOwned};
 
-type Extra1<'b> = &'b mut (u32, u16, f32, OwnedIter);
-type Extra0<'b> = &'b mut (NonZero<u64>, u16, OwnedIter);
+type Extra1<'b> = &'b mut (u32, u16, f32, u32);
+type Extra0<'b> = &'b mut (NonZero<u64>, u16, u32);
 
 pub fn default_search<'r, 'b: 'r, R: RelationRead, O: Operator>(
     index: &'r R,
@@ -97,12 +96,7 @@ where
                     let lowerbound = Distance::from_f32(rough - err * epsilon);
                     results.push((
                         Reverse(lowerbound),
-                        AlwaysEqual(bump.alloc((
-                            first,
-                            head,
-                            norm,
-                            OwnedIter::from_slice(prefetch),
-                        ))),
+                        AlwaysEqual(bump.alloc((first, head, norm, prefetch[0]))),
                     ));
                 },
             );
@@ -133,11 +127,11 @@ where
         let jump_guard = index.read(first);
         let jump_bytes = jump_guard.get(1).expect("data corruption");
         let jump_tuple = JumpTuple::deserialize_ref(jump_bytes);
-        let mut callback = id_2(|(rough, err), head, payload, prefetch| {
+        let mut callback = id_2(|(rough, err), head, payload, prefetch: &[u32]| {
             let lowerbound = Distance::from_f32(rough - err * epsilon);
             results.push((
                 (Reverse(lowerbound), AlwaysEqual(())),
-                AlwaysEqual(bump.alloc((payload, head, OwnedIter::from_slice(prefetch)))),
+                AlwaysEqual(bump.alloc((payload, head, prefetch[0]))),
             ));
         });
         if prefetch_h0_tuples.is_not_plain() {
@@ -233,12 +227,7 @@ where
                     let lowerbound = Distance::from_f32(rough - err * epsilon);
                     results.push((
                         Reverse(lowerbound),
-                        AlwaysEqual(bump.alloc((
-                            first,
-                            head,
-                            norm,
-                            OwnedIter::from_slice(prefetch),
-                        ))),
+                        AlwaysEqual(bump.alloc((first, head, norm, prefetch[0]))),
                     ));
                 },
             );
@@ -271,12 +260,12 @@ where
         let jump_guard = index.read(first);
         let jump_bytes = jump_guard.get(1).expect("data corruption");
         let jump_tuple = JumpTuple::deserialize_ref(jump_bytes);
-        let mut callback = id_2(|(rough, err), head, payload, prefetch| {
+        let mut callback = id_2(|(rough, err), head, payload, prefetch: &[u32]| {
             let lowerbound = Distance::from_f32(rough - err * epsilon);
             let rough = Distance::from_f32(rough);
             results.push((
                 (Reverse(lowerbound), AlwaysEqual(rough)),
-                AlwaysEqual(bump.alloc((payload, head, OwnedIter::from_slice(prefetch)))),
+                AlwaysEqual(bump.alloc((payload, head, prefetch[0]))),
             ));
         });
         if prefetch_h0_tuples.is_not_plain() {

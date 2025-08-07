@@ -28,7 +28,7 @@ use std::collections::BinaryHeap;
 use std::num::NonZero;
 use vector::{VectorBorrowed, VectorOwned};
 
-type Extra1<'b> = &'b mut (u32, u16, f32, OwnedIter);
+type Extra1<'b> = &'b mut (u32, u16, f32, u32);
 
 pub fn insert_vector<R: RelationRead + RelationWrite, O: Operator>(
     index: &R,
@@ -112,12 +112,7 @@ pub fn insert<'r, 'b: 'r, R: RelationRead + RelationWrite, O: Operator>(
                     let lowerbound = Distance::from_f32(rough - err * epsilon);
                     results.push((
                         Reverse(lowerbound),
-                        AlwaysEqual(bump.alloc((
-                            first,
-                            head,
-                            norm,
-                            OwnedIter::from_slice(prefetch),
-                        ))),
+                        AlwaysEqual(bump.alloc((first, head, norm, prefetch[0]))),
                     ));
                 },
             );
