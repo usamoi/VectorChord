@@ -16,7 +16,7 @@ use crate::stack::StackIntoIter;
 
 #[derive(Clone)]
 pub struct HeapIntoIter<'a, T> {
-    inner: std::iter::Copied<std::slice::Iter<'a, T>>,
+    inner: std::slice::Iter<'a, T>,
 }
 
 impl<'a, T: Copy> HeapIntoIter<'a, T> {
@@ -24,8 +24,13 @@ impl<'a, T: Copy> HeapIntoIter<'a, T> {
     pub(crate) fn from_slice(slice: &[T], alloc: impl Fn(&[T]) -> &'a [T]) -> Self {
         assert!(slice.len() <= 65535_usize);
         Self {
-            inner: alloc(slice).iter().copied(),
+            inner: alloc(slice).iter(),
         }
+    }
+
+    #[inline(always)]
+    pub(crate) fn as_slice(&self) -> &[T] {
+        self.inner.as_slice()
     }
 }
 
@@ -34,9 +39,16 @@ impl<'a, T: Copy> Iterator for HeapIntoIter<'a, T> {
 
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
+        self.inner.next().copied()
+    }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
     }
 }
+
+impl<'a, T: Copy> ExactSizeIterator for HeapIntoIter<'a, T> {}
 
 #[derive(Clone)]
 pub enum IntoIter<'a, T: Copy, const N: usize> {
@@ -52,6 +64,14 @@ impl<'a, T: Copy, const N: usize> IntoIter<'a, T, N> {
             IntoIter::Stack(StackIntoIter::from_slice(slice))
         } else {
             IntoIter::Heap(HeapIntoIter::from_slice(slice, alloc))
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[T] {
+        match self {
+            IntoIter::Stack(x) => x.as_slice(),
+            IntoIter::Heap(x) => x.as_slice(),
         }
     }
 }

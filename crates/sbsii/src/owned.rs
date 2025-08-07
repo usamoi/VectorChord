@@ -35,6 +35,17 @@ impl<T: Copy> HeapIntoIter<T> {
             }
         }
     }
+
+    #[inline(always)]
+    pub(crate) fn as_slice(&self) -> &[T] {
+        #[allow(unsafe_code)]
+        unsafe {
+            std::slice::from_raw_parts(
+                self.pointer.as_ptr().add(self.off as _),
+                (self.len - self.off) as _,
+            )
+        }
+    }
 }
 
 impl<T: Copy> Iterator for HeapIntoIter<T> {
@@ -53,7 +64,15 @@ impl<T: Copy> Iterator for HeapIntoIter<T> {
             }
         }
     }
+
+    #[inline(always)]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let size = (self.len - self.off) as usize;
+        (size, Some(size))
+    }
 }
+
+impl<T: Copy> ExactSizeIterator for HeapIntoIter<T> {}
 
 impl<T: Copy> Clone for HeapIntoIter<T> {
     #[inline(always)]
@@ -96,6 +115,14 @@ impl<T: Copy, const N: usize> IntoIter<T, N> {
             IntoIter::Stack(StackIntoIter::from_slice(slice))
         } else {
             IntoIter::Heap(HeapIntoIter::from_slice(slice))
+        }
+    }
+
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[T] {
+        match self {
+            IntoIter::Stack(x) => x.as_slice(),
+            IntoIter::Heap(x) => x.as_slice(),
         }
     }
 }
