@@ -68,6 +68,9 @@ where
 
     fn next(&mut self) -> Option<(Self::Item, PlainPrefetcherGuards<'r, R>)> {
         let e = self.sequence.next()?;
+        if let Some(p) = self.sequence.peek() {
+            p.prefetch();
+        }
         let list = e.fetch();
         Some((
             e,
@@ -86,6 +89,9 @@ where
             return None;
         }
         let e = self.sequence.next()?;
+        if let Some(p) = self.sequence.peek() {
+            p.prefetch();
+        }
         let list = e.fetch();
         Some((
             e,
