@@ -157,7 +157,10 @@ pub type BorrowedIter<'b> = sbsii::borrowed::IntoIter<'b, u32, 4>;
 pub type OwnedIter = sbsii::owned::IntoIter<u32, 4>;
 
 pub trait Fetch {
+    #[must_use]
     fn fetch(&self) -> OwnedIter;
+    #[inline(always)]
+    fn prefetch(&self) {}
 }
 
 impl Fetch for u32 {
@@ -171,12 +174,32 @@ impl<T, A, B> Fetch for (T, AlwaysEqual<&mut (A, B, OwnedIter)>) {
         let (_, AlwaysEqual((.., list))) = self;
         list.clone()
     }
+
+    #[cfg(target_arch = "x86_64")]
+    fn prefetch(&self) {
+        #[allow(unsafe_code)]
+        unsafe {
+            use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+            let p = self.1.0 as *const _ as *const i8;
+            _mm_prefetch(p, _MM_HINT_T0);
+        }
+    }
 }
 
 impl<T, A, B, C> Fetch for (T, AlwaysEqual<&mut (A, B, C, OwnedIter)>) {
     fn fetch(&self) -> OwnedIter {
         let (_, AlwaysEqual((.., list))) = self;
         list.clone()
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn prefetch(&self) {
+        #[allow(unsafe_code)]
+        unsafe {
+            use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
+            let p = self.1.0 as *const _ as *const i8;
+            _mm_prefetch(p, _MM_HINT_T0);
+        }
     }
 }
 
@@ -232,12 +255,15 @@ pub trait Sequence {
 impl<T: Ord> Sequence for BinaryHeap<T> {
     type Item = T;
     type Inner = std::vec::IntoIter<T>;
+    #[inline(always)]
     fn next(&mut self) -> Option<T> {
         self.pop()
     }
+    #[inline(always)]
     fn peek(&mut self) -> Option<&T> {
         (self as &Self).peek()
     }
+    #[inline(always)]
     fn into_inner(self) -> Self::Inner {
         self.into_vec().into_iter()
     }
@@ -246,12 +272,15 @@ impl<T: Ord> Sequence for BinaryHeap<T> {
 impl<I: Iterator> Sequence for Peekable<I> {
     type Item = I::Item;
     type Inner = Peekable<I>;
+    #[inline(always)]
     fn next(&mut self) -> Option<I::Item> {
         Iterator::next(self)
     }
+    #[inline(always)]
     fn peek(&mut self) -> Option<&I::Item> {
         self.peek()
     }
+    #[inline(always)]
     fn into_inner(self) -> Self::Inner {
         self
     }
@@ -260,12 +289,15 @@ impl<I: Iterator> Sequence for Peekable<I> {
 impl<T> Sequence for VecDeque<T> {
     type Item = T;
     type Inner = std::collections::vec_deque::IntoIter<T>;
+    #[inline(always)]
     fn next(&mut self) -> Option<T> {
         self.pop_front()
     }
+    #[inline(always)]
     fn peek(&mut self) -> Option<&T> {
         self.front()
     }
+    #[inline(always)]
     fn into_inner(self) -> Self::Inner {
         self.into_iter()
     }
