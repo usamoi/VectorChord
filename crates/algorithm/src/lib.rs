@@ -36,6 +36,7 @@ pub use rerank::{how, rerank_heap, rerank_index};
 pub use search::{default_search, maxsim_search};
 
 use std::collections::BinaryHeap;
+use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
@@ -162,6 +163,13 @@ impl<'b, T, A, B> Fetch for (T, AlwaysEqual<&'b mut (A, B, &'b mut [u32])>) {
     fn fetch(&self) -> &[u32] {
         let (_, AlwaysEqual((.., list))) = self;
         list
+    }
+}
+
+impl<T> Fetch for (T, AlwaysEqual<(NonZero<u64>, (u32, u16))>) {
+    fn fetch(&self) -> &[u32] {
+        let (_, AlwaysEqual((.., (list, _)))) = self;
+        std::slice::from_ref(list)
     }
 }
 

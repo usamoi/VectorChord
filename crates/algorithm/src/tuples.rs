@@ -700,9 +700,6 @@ impl JumpTupleReader<'_> {
     pub fn appendable_first(self) -> u32 {
         self.header.appendable_first
     }
-    pub fn tuples(self) -> u64 {
-        self.header.tuples
-    }
 }
 
 #[derive(Debug)]

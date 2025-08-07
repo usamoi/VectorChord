@@ -25,7 +25,9 @@ pub struct SearchOptions {
     pub epsilon: f32,
     pub probes: Vec<u32>,
     pub max_scan_tuples: Option<u32>,
+    #[expect(dead_code)]
     pub maxsim_refine: u32,
+    #[expect(dead_code)]
     pub maxsim_threshold: u32,
     pub io_rerank: SearchIo,
 }
