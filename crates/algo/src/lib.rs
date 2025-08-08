@@ -160,7 +160,7 @@ impl Bump for bumpalo::Bump {
 }
 
 pub type BorrowedIter<'b> = sbsii::borrowed::IntoIter<'b, u32, 1>;
-pub type OwnedIter = sbsii::owned::IntoIter<u32, 4>;
+pub type OwnedIter = sbsii::owned::IntoIter<u32, 1>;
 
 pub trait Fetch {
     #[must_use]

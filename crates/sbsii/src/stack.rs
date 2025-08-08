@@ -16,25 +16,26 @@ use std::mem::MaybeUninit;
 
 #[derive(Clone)]
 pub struct StackIntoIter<T: Copy, const N: usize> {
-    start: u16,
-    end: u16,
-    buffer: [MaybeUninit<T>; N],
+    flag: bool,
+    buffer: [MaybeUninit<T>; 1],
 }
 
 impl<T: Copy, const N: usize> StackIntoIter<T, N> {
     #[inline(always)]
     pub(crate) fn from_slice(slice: &[T]) -> Self {
         assert!(slice.len() <= N && N <= 65535);
-        Self {
-            start: 0,
-            end: slice.len() as u16,
-            buffer: {
-                let mut buffer = [const { MaybeUninit::uninit() }; N];
-                for i in 0..slice.len() {
-                    buffer[i] = MaybeUninit::new(slice[i]);
-                }
-                buffer
+        match slice.len() {
+            0 => Self {
+                flag: false,
+                buffer: [MaybeUninit::uninit()],
             },
+            1 => Self {
+                flag: true,
+                buffer: [MaybeUninit::new(slice[0])],
+            },
+            _ => {
+                unimplemented!()
+            }
         }
     }
 
@@ -42,10 +43,7 @@ impl<T: Copy, const N: usize> StackIntoIter<T, N> {
     pub(crate) fn as_slice(&self) -> &[T] {
         #[allow(unsafe_code)]
         unsafe {
-            std::slice::from_raw_parts(
-                self.buffer.as_ptr().add(self.start as _).cast(),
-                (self.end - self.start) as _,
-            )
+            std::slice::from_raw_parts(self.buffer.as_ptr().cast(), if self.flag { 1 } else { 0 })
         }
     }
 }
@@ -57,10 +55,9 @@ impl<T: Copy, const N: usize> Iterator for StackIntoIter<T, N> {
     fn next(&mut self) -> Option<Self::Item> {
         #[allow(unsafe_code)]
         unsafe {
-            if self.start < self.end {
-                let r = self.buffer[self.start as usize].assume_init();
-                self.start += 1;
-                Some(r)
+            if self.flag {
+                self.flag = false;
+                Some(self.buffer[0].assume_init_read())
             } else {
                 None
             }
@@ -69,7 +66,7 @@ impl<T: Copy, const N: usize> Iterator for StackIntoIter<T, N> {
 
     #[inline(always)]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let size = (self.end - self.start) as usize;
+        let size = self.flag as usize;
         (size, Some(size))
     }
 }

@@ -23,6 +23,7 @@ pub struct HeapIntoIter<T: Copy> {
 
 impl<T: Copy> HeapIntoIter<T> {
     #[cold]
+    #[expect(dead_code)]
     pub(crate) fn from_slice(slice: &[T]) -> Self {
         assert!(slice.len() <= 65535_usize);
         let c = box_into_non_null::<[T]>(Box::from(slice)).cast::<T>();
@@ -34,6 +35,7 @@ impl<T: Copy> HeapIntoIter<T> {
     }
 
     #[inline(always)]
+    #[expect(dead_code)]
     pub(crate) fn as_slice(&self) -> &[T] {
         #[allow(unsafe_code)]
         unsafe {
@@ -101,7 +103,6 @@ impl<T: Copy> Drop for HeapIntoIter<T> {
 #[derive(Clone)]
 pub enum IntoIter<T: Copy, const N: usize> {
     Stack(StackIntoIter<T, N>),
-    Heap(HeapIntoIter<T>),
 }
 
 impl<T: Copy, const N: usize> IntoIter<T, N> {
@@ -111,7 +112,7 @@ impl<T: Copy, const N: usize> IntoIter<T, N> {
         if slice.len() <= N && N <= 65535 {
             IntoIter::Stack(StackIntoIter::from_slice(slice))
         } else {
-            IntoIter::Heap(HeapIntoIter::from_slice(slice))
+            unimplemented!()
         }
     }
 
@@ -119,7 +120,6 @@ impl<T: Copy, const N: usize> IntoIter<T, N> {
     pub fn as_slice(&self) -> &[T] {
         match self {
             IntoIter::Stack(x) => x.as_slice(),
-            IntoIter::Heap(x) => x.as_slice(),
         }
     }
 }
@@ -131,7 +131,6 @@ impl<T: Copy, const N: usize> Iterator for IntoIter<T, N> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             IntoIter::Stack(iter) => iter.next(),
-            IntoIter::Heap(iter) => iter.next(),
         }
     }
 
@@ -139,7 +138,6 @@ impl<T: Copy, const N: usize> Iterator for IntoIter<T, N> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
             IntoIter::Stack(iter) => iter.size_hint(),
-            IntoIter::Heap(iter) => iter.size_hint(),
         }
     }
 }
@@ -148,7 +146,7 @@ impl<T: Copy, const N: usize> ExactSizeIterator for IntoIter<T, N> {}
 
 #[cfg(target_pointer_width = "64")]
 const _: () = {
-    assert!(size_of::<IntoIter::<u32, 4>>() == 24);
+    assert!(size_of::<IntoIter::<u32, 1>>() == 8);
 };
 
 // Emulate unstable library feature `box_vec_non_null`.

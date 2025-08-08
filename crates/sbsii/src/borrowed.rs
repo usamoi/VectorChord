@@ -26,6 +26,7 @@ pub struct HeapIntoIter<'a, T: Copy> {
 
 impl<'a, T: Copy> HeapIntoIter<'a, T> {
     #[cold]
+    #[expect(dead_code)]
     pub(crate) fn from_slice(slice: &'a [T]) -> Self {
         assert!(slice.len() <= 65535_usize);
         let c = NonNull::from_ref(slice).cast::<T>();
@@ -38,6 +39,7 @@ impl<'a, T: Copy> HeapIntoIter<'a, T> {
     }
 
     #[inline(always)]
+    #[expect(dead_code)]
     pub(crate) fn as_slice(&self) -> &[T] {
         #[allow(unsafe_code)]
         unsafe {
@@ -77,26 +79,24 @@ impl<'a, T: Copy> ExactSizeIterator for HeapIntoIter<'a, T> {}
 
 #[derive(Clone)]
 pub enum IntoIter<'a, T: Copy, const N: usize> {
-    Stack(StackIntoIter<T, N>),
-    Heap(HeapIntoIter<'a, T>),
+    Stack(StackIntoIter<T, N>, PhantomData<&'a ()>),
 }
 
 impl<'a, T: Copy + 'a, const N: usize> IntoIter<'a, T, N> {
     #[inline(always)]
-    pub fn from_slice(slice: &[T], alloc: impl Fn(&[T]) -> &'a [T]) -> Self {
+    pub fn from_slice(slice: &[T], _alloc: impl Fn(&[T]) -> &'a [T]) -> Self {
         assert!(slice.len() <= 65535);
         if slice.len() <= N && N <= 65535 {
-            IntoIter::Stack(StackIntoIter::from_slice(slice))
+            IntoIter::Stack(StackIntoIter::from_slice(slice), PhantomData)
         } else {
-            IntoIter::Heap(HeapIntoIter::from_slice(alloc(slice)))
+            unimplemented!()
         }
     }
 
     #[inline(always)]
     pub fn as_slice(&self) -> &[T] {
         match self {
-            IntoIter::Stack(x) => x.as_slice(),
-            IntoIter::Heap(x) => x.as_slice(),
+            IntoIter::Stack(x, _) => x.as_slice(),
         }
     }
 }
@@ -107,16 +107,14 @@ impl<'a, T: Copy, const N: usize> Iterator for IntoIter<'a, T, N> {
     #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            IntoIter::Stack(iter) => iter.next(),
-            IntoIter::Heap(iter) => iter.next(),
+            IntoIter::Stack(iter, _) => iter.next(),
         }
     }
 
     #[inline(always)]
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
-            IntoIter::Stack(iter) => iter.size_hint(),
-            IntoIter::Heap(iter) => iter.size_hint(),
+            IntoIter::Stack(iter, _) => iter.size_hint(),
         }
     }
 }
@@ -125,7 +123,7 @@ impl<'a, T: Copy, const N: usize> ExactSizeIterator for IntoIter<'a, T, N> {}
 
 #[cfg(target_pointer_width = "64")]
 const _: () = {
-    assert!(size_of::<IntoIter::<'static, u32, 1>>() == 16);
+    assert!(size_of::<IntoIter::<'static, u32, 1>>() == 8);
 };
 
 #[test]
