@@ -111,3 +111,6 @@ strip = "debuginfo"
 inherits = "release"
 debug = "full"
 strip = "none"
+
+[patch.crates-io]
+pgrx = { git = "https://github.com/usamoi/pgrx.git", branch = "cfi" }
