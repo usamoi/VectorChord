@@ -59,5 +59,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("cargo::rustc-link-arg-cdylib=-sSIDE_MODULE=2");
         println!("cargo::rustc-link-arg-bins=-sEXPORTED_FUNCTIONS=[_main]");
     }
+    if var("CARGO_CFG_TARGET_ARCH")? == "powerpc64" && var("CARGO_CFG_TARGET_OS")? == "linux" {
+        println!("cargo::rustc-link-arg-bin=pgrx_embed_vchord=-Wl,--unresolved-symbols=ignore-all");
+    }
     Ok(())
 }
