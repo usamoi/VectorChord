@@ -39,7 +39,7 @@ pub use half::f16;
 #[cfg(feature = "experimental")]
 pub use f16;
 
-trait F16: Sized {
+pub trait F16: Sized {
     const _ZERO: Self;
 
     fn _from_f32(x: f32) -> Self;

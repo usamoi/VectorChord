@@ -464,7 +464,7 @@ impl Operator for Op<VectOwned<f16>, L2S> {
                 let dims = vector.dims();
                 let t = zip(&code.1, centroid.slice())
                     .map(|(&sign, &num)| std::hint::select_unpredictable(sign, num, -num))
-                    .map(f32::from)
+                    .map(simd::F16::_to_f32)
                     .sum::<f32>()
                     / (dims as f32).sqrt();
                 let sum_of_x_2 = code.0.dis_u_2;
@@ -544,7 +544,7 @@ impl Operator for Op<VectOwned<f16>, Dot> {
                 let dims = vector.dims();
                 let t = zip(&code.1, centroid.slice())
                     .map(|(&sign, &num)| std::hint::select_unpredictable(sign, num, -num))
-                    .map(f32::from)
+                    .map(simd::F16::_to_f32)
                     .sum::<f32>()
                     / (dims as f32).sqrt();
                 let sum_of_x_2 = code.0.dis_u_2;
