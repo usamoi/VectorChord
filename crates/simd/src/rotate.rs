@@ -51,6 +51,6 @@ pub mod flip {
     }
 }
 
-pub fn flip(bits: &[u64; 1024], result: &mut [f32]) {
-    flip::flip(bits, result)
+pub fn flip(_bits: &[u64; 1024], _result: &mut [f32]) {
+    // flip::flip(bits, result)
 }
