@@ -17,6 +17,9 @@ serde.workspace = true
 validator.workspace = true
 zerocopy.workspace = true
 
+[build-dependencies]
+cc.workspace = true
+
 [dev-dependencies]
 rand.workspace = true
 

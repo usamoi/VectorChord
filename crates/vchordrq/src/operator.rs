@@ -103,6 +103,8 @@ pub trait Vector: VectorOwned {
     fn code(vector: Self::Borrowed<'_>) -> rabitq::bit::Code;
 
     fn squared_norm(vector: Self::Borrowed<'_>) -> f32;
+
+    fn gpu_push(buffer: &mut Vec<u8>, vector: Self::Borrowed<'_>);
 }
 
 impl Vector for VectOwned<f32> {
@@ -154,6 +156,13 @@ impl Vector for VectOwned<f32> {
 
     fn squared_norm(vector: Self::Borrowed<'_>) -> f32 {
         f32::reduce_sum_of_x2(vector.slice())
+    }
+
+    fn gpu_push(buffer: &mut Vec<u8>, vector: Self::Borrowed<'_>) {
+        #[cfg(target_endian = "big")]
+        unimplemented!();
+        #[cfg(target_endian = "little")]
+        buffer.extend_from_slice(vector.slice().as_bytes());
     }
 }
 
@@ -207,6 +216,13 @@ impl Vector for VectOwned<f16> {
     fn squared_norm(vector: Self::Borrowed<'_>) -> f32 {
         f16::reduce_sum_of_x2(vector.slice())
     }
+
+    fn gpu_push(buffer: &mut Vec<u8>, vector: Self::Borrowed<'_>) {
+        #[cfg(target_endian = "big")]
+        unimplemented!();
+        #[cfg(target_endian = "little")]
+        buffer.extend_from_slice(vector.slice().as_bytes());
+    }
 }
 
 pub trait Operator: 'static + Debug + Copy {
@@ -239,6 +255,8 @@ pub trait Operator: 'static + Debug + Copy {
         vector: <Self::Vector as VectorOwned>::Borrowed<'_>,
         centroid: Option<Self::Vector>,
     ) -> (rabitq::bit::Code, f32);
+
+    fn gpu_op() -> crate::assign::ffi::op_t::Type;
 }
 
 #[derive(Debug)]
@@ -325,6 +343,10 @@ impl Operator for Op<VectOwned<f32>, L2S> {
             (code, delta)
         }
     }
+
+    fn gpu_op() -> crate::assign::ffi::op_t::Type {
+        crate::assign::ffi::op_t::vecf32_l2s
+    }
 }
 
 impl Operator for Op<VectOwned<f32>, Dot> {
@@ -404,6 +426,10 @@ impl Operator for Op<VectOwned<f32>, Dot> {
             (code, delta)
         }
     }
+
+    fn gpu_op() -> crate::assign::ffi::op_t::Type {
+        crate::assign::ffi::op_t::vecf32_dot
+    }
 }
 
 impl Operator for Op<VectOwned<f16>, L2S> {
@@ -479,6 +505,10 @@ impl Operator for Op<VectOwned<f16>, L2S> {
             let delta = 0.0;
             (code, delta)
         }
+    }
+
+    fn gpu_op() -> crate::assign::ffi::op_t::Type {
+        crate::assign::ffi::op_t::vecf16_l2s
     }
 }
 
@@ -559,6 +589,10 @@ impl Operator for Op<VectOwned<f16>, Dot> {
             let delta = 0.0;
             (code, delta)
         }
+    }
+
+    fn gpu_op() -> crate::assign::ffi::op_t::Type {
+        crate::assign::ffi::op_t::vecf16_dot
     }
 }
 

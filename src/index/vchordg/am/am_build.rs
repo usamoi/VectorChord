@@ -197,27 +197,20 @@ pub unsafe extern "C-unwind" fn ambuild(
         let errors = "alpha not equal to `1.0` are only applicable to l2 and cosine distance.";
         pgrx::warning!("warning while validating options: {errors}");
     }
-    let opfamily = unsafe { opfamily(index_relation) };
     let index = unsafe { PostgresRelation::new(index_relation) };
-    let heap = Heap {
-        heap_relation,
-        index_relation,
-        index_info,
-        opfamily,
-        scan: std::ptr::null_mut(),
-    };
     let mut reporter = PostgresReporter {};
     crate::index::vchordg::algo::build(vector_options, vchordg_options.index, &index);
     reporter.phase(BuildPhase::from_code(BuildPhaseCode::Inserting));
-    let cache = vchordg_cached::VchordgCached::_0 {};
+    let cache = vchordg_cached::VchordgCached::_0 {}.serialize();
     if let Some(leader) = unsafe {
         VchordgLeader::enter(
             heap_relation,
             index_relation,
             (*index_info).ii_Concurrent,
-            cache,
+            &cache,
         )
     } {
+        drop(cache);
         unsafe {
             parallel_build(
                 index_relation,
@@ -249,18 +242,18 @@ pub unsafe extern "C-unwind" fn ambuild(
             pgrx::pg_sys::ConditionVariableCancelSleep();
         }
     } else {
-        let mut indtuples = 0;
-        reporter.tuples_done(indtuples);
-        heap.traverse(true, |(ctid, store)| {
-            for (vector, extra) in store {
-                let key = ctid_to_key(ctid);
-                let payload = kv_to_pointer((key, extra));
-                crate::index::vchordg::algo::insert(opfamily, &index, payload, vector);
-            }
-            indtuples += 1;
-            reporter.tuples_done(indtuples);
-        });
-        reporter.tuples_total(indtuples);
+        unsafe {
+            let indtuples = sequential_build(
+                index_relation,
+                heap_relation,
+                index_info,
+                &cache,
+                |indtuples| {
+                    reporter.tuples_done(indtuples);
+                },
+            );
+            reporter.tuples_total(indtuples);
+        }
     }
     unsafe { pgrx::pgbox::PgBox::<pgrx::pg_sys::IndexBuildResult>::alloc0().into_pg() }
 }
@@ -304,13 +297,8 @@ impl VchordgLeader {
         heap_relation: pgrx::pg_sys::Relation,
         index_relation: pgrx::pg_sys::Relation,
         isconcurrent: bool,
-        cache: vchordg_cached::VchordgCached,
+        cache: &[u8],
     ) -> Option<Self> {
-        let _cache = cache.serialize();
-        #[expect(clippy::drop_non_drop)]
-        drop(cache);
-        let cache = _cache;
-
         unsafe fn compute_parallel_workers(
             heap_relation: pgrx::pg_sys::Relation,
             index_relation: pgrx::pg_sys::Relation,
@@ -581,6 +569,43 @@ unsafe fn parallel_build(
         pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordgshared).mutex);
         pgrx::pg_sys::ConditionVariableSignal(&raw mut (*vchordgshared).workersdonecv);
     }
+}
+
+unsafe fn sequential_build(
+    index_relation: pgrx::pg_sys::Relation,
+    heap_relation: pgrx::pg_sys::Relation,
+    index_info: *mut pgrx::pg_sys::IndexInfo,
+    vchordgcached: &[u8],
+    mut callback: impl FnMut(u64),
+) -> u64 {
+    use vchordg_cached::VchordgCachedReader;
+    let cached = VchordgCachedReader::deserialize_ref(vchordgcached);
+    let index = unsafe { PostgresRelation::new(index_relation) };
+
+    let opfamily = unsafe { opfamily(index_relation) };
+    let heap = Heap {
+        heap_relation,
+        index_relation,
+        index_info,
+        opfamily,
+        scan: std::ptr::null_mut(),
+    };
+
+    let mut indtuples = 0;
+    match cached {
+        VchordgCachedReader::_0(_) => {
+            heap.traverse(true, |(ctid, store)| {
+                for (vector, extra) in store {
+                    let key = ctid_to_key(ctid);
+                    let payload = kv_to_pointer((key, extra));
+                    crate::index::vchordg::algo::insert(opfamily, &index, payload, vector);
+                }
+                indtuples += 1;
+                callback(indtuples);
+            });
+        }
+    }
+    indtuples
 }
 
 #[pgrx::pg_guard]

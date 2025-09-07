@@ -17,7 +17,7 @@ use crate::tape::TapeWriter;
 use crate::tape_writer::{DirectoryTapeWriter, H1TapeWriter};
 use crate::tuples::*;
 use crate::types::*;
-use crate::{Branch, Opaque};
+use crate::{Branch, Build, Opaque};
 use algo::{Page, RelationWrite};
 use vector::{VectorBorrowed, VectorOwned};
 
@@ -26,7 +26,8 @@ pub fn build<R: RelationWrite, O: Operator>(
     vchordrq_options: VchordrqIndexOptions,
     index: &R,
     structures: Vec<Structure<O::Vector>>,
-) where
+) -> Build
+where
     R::Page: Page<Opaque = Opaque>,
 {
     let dims = vector_options.dims;
@@ -36,6 +37,13 @@ pub fn build<R: RelationWrite, O: Operator>(
     let mut freepages = TapeWriter::<_, FreepagesTuple>::create(index, false);
     freepages.push(FreepagesTuple {});
     let mut vectors = TapeWriter::<_, VectorTuple<O::Vector>>::create(index, true);
+    let mut build = Build {
+        op: O::gpu_op(),
+        d: vector_options.dims as _,
+        n: structures[0].len(),
+        centroids: Vec::new(),
+        labels: Vec::new(),
+    };
     let mut pointer_of_centroids = Vec::<Vec<(Vec<u32>, u16)>>::new();
     for i in 0..structures.len() {
         let mut level = Vec::new();
@@ -91,6 +99,11 @@ pub fn build<R: RelationWrite, O: Operator>(
                     tuples: 0,
                 });
                 level.push(jump.first());
+                O::Vector::gpu_push(
+                    &mut build.centroids,
+                    structures[i].centroids[j].as_borrowed(),
+                );
+                build.labels.push(jump.first());
             } else {
                 let mut tape = H1TapeWriter::create(index, O::Vector::count(dims as _), false);
                 let centroid = structures[i].centroids[j].as_borrowed();
@@ -141,6 +154,7 @@ pub fn build<R: RelationWrite, O: Operator>(
         freepages_first: freepages.first(),
         cells: structures.iter().map(|s| s.len() as _).collect(),
     });
+    build
 }
 
 fn norm<V: Vector>(vector: V::Borrowed<'_>) -> f32 {

@@ -20,7 +20,7 @@ use algo::*;
 use simd::f16;
 use std::collections::BinaryHeap;
 use std::num::NonZero;
-use vchordrq::operator::Op;
+use vchordrq::operator::{Op, Vector};
 use vchordrq::types::*;
 use vchordrq::{FastHeap, Opaque};
 use vector::VectorOwned;
@@ -116,7 +116,8 @@ pub fn build<R>(
     vchordrq_options: VchordrqIndexOptions,
     index: &R,
     structures: Vec<Structure<Vec<f32>>>,
-) where
+) -> vchordrq::Build
+where
     R: RelationRead + RelationWrite,
     R::Page: Page<Opaque = Opaque>,
 {
@@ -233,6 +234,159 @@ pub fn insert<R>(
                 skip_freespaces,
             )
         }
+    }
+}
+
+pub struct Assign<'a, R> {
+    opfamily: Opfamily,
+    index: &'a R,
+    m: usize,
+    client: &'a mut vchordrq::Client,
+    labels: &'a [u32],
+    rows: Vec<(NonZero<u64>, (Vec<u32>, u16), OwnedVector, u16)>,
+}
+
+impl<'a, R> Assign<'a, R>
+where
+    R: RelationRead + RelationWrite,
+    R::Page: Page<Opaque = Opaque>,
+{
+    pub fn new(
+        opfamily: Opfamily,
+        index: &'a R,
+        m: usize,
+        client: &'a mut vchordrq::Client,
+        labels: &'a [u32],
+    ) -> Self {
+        Self {
+            opfamily,
+            index,
+            m,
+            client,
+            labels,
+            rows: Vec::new(),
+        }
+    }
+    pub fn push(&mut self, mut row: (NonZero<u64>, OwnedVector, u16)) {
+        match (&mut row.1, self.opfamily.distance_kind()) {
+            (OwnedVector::Vecf32(vector), DistanceKind::L2S) => {
+                let key = vchordrq::insert_vector::<_, Op<VectOwned<f32>, L2S>>(
+                    self.index,
+                    row.0,
+                    vector.as_borrowed(),
+                );
+                let projected = RandomProject::project(vector.as_borrowed());
+                self.rows
+                    .push((row.0, key, OwnedVector::Vecf32(projected), row.2));
+                if self.rows.len() >= self.m {
+                    self.flush();
+                }
+            }
+            (OwnedVector::Vecf32(vector), DistanceKind::Dot) => {
+                let key = vchordrq::insert_vector::<_, Op<VectOwned<f32>, Dot>>(
+                    self.index,
+                    row.0,
+                    vector.as_borrowed(),
+                );
+                let projected = RandomProject::project(vector.as_borrowed());
+                self.rows
+                    .push((row.0, key, OwnedVector::Vecf32(projected), row.2));
+                if self.rows.len() >= self.m {
+                    self.flush();
+                }
+            }
+            (OwnedVector::Vecf16(vector), DistanceKind::L2S) => {
+                let key = vchordrq::insert_vector::<_, Op<VectOwned<f16>, L2S>>(
+                    self.index,
+                    row.0,
+                    vector.as_borrowed(),
+                );
+                let projected = RandomProject::project(vector.as_borrowed());
+                self.rows
+                    .push((row.0, key, OwnedVector::Vecf16(projected), row.2));
+                if self.rows.len() >= self.m {
+                    self.flush();
+                }
+            }
+            (OwnedVector::Vecf16(vector), DistanceKind::Dot) => {
+                let key = vchordrq::insert_vector::<_, Op<VectOwned<f16>, Dot>>(
+                    self.index,
+                    row.0,
+                    vector.as_borrowed(),
+                );
+                let projected = RandomProject::project(vector.as_borrowed());
+                self.rows
+                    .push((row.0, key, OwnedVector::Vecf16(projected), row.2));
+                if self.rows.len() >= self.m {
+                    self.flush();
+                }
+            }
+        }
+    }
+    pub fn flush(&mut self) {
+        for chunk in self.rows.chunks(self.m as usize) {
+            let mut buffer = Vec::new();
+            for (_, _, vector, _) in chunk {
+                match vector {
+                    OwnedVector::Vecf32(x) => {
+                        VectOwned::<f32>::gpu_push(&mut buffer, x.as_borrowed())
+                    }
+                    OwnedVector::Vecf16(x) => {
+                        VectOwned::<f16>::gpu_push(&mut buffer, x.as_borrowed())
+                    }
+                }
+            }
+            let results = self.client.query(&buffer).expect("failed to enable gpu");
+            for ((payload, key, vector, _), &mut best) in chunk.iter().zip(results) {
+                match (vector, self.opfamily.distance_kind()) {
+                    (OwnedVector::Vecf32(projected), DistanceKind::L2S) => {
+                        vchordrq::assign::<_, Op<VectOwned<f32>, L2S>>(
+                            self.index,
+                            *payload,
+                            projected.as_borrowed(),
+                            key.clone(),
+                            true,
+                            self.labels,
+                            best,
+                        )
+                    }
+                    (OwnedVector::Vecf32(projected), DistanceKind::Dot) => {
+                        vchordrq::assign::<_, Op<VectOwned<f32>, Dot>>(
+                            self.index,
+                            *payload,
+                            projected.as_borrowed(),
+                            key.clone(),
+                            true,
+                            self.labels,
+                            best,
+                        )
+                    }
+                    (OwnedVector::Vecf16(projected), DistanceKind::L2S) => {
+                        vchordrq::assign::<_, Op<VectOwned<f16>, L2S>>(
+                            self.index,
+                            *payload,
+                            projected.as_borrowed(),
+                            key.clone(),
+                            true,
+                            self.labels,
+                            best,
+                        )
+                    }
+                    (OwnedVector::Vecf16(projected), DistanceKind::Dot) => {
+                        vchordrq::assign::<_, Op<VectOwned<f16>, Dot>>(
+                            self.index,
+                            *payload,
+                            projected.as_borrowed(),
+                            key.clone(),
+                            true,
+                            self.labels,
+                            best,
+                        )
+                    }
+                }
+            }
+        }
+        self.rows.clear();
     }
 }
 
