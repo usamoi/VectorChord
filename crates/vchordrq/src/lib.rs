@@ -12,6 +12,7 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
+mod assign;
 mod build;
 mod bulkdelete;
 mod cache;
@@ -34,6 +35,7 @@ pub mod operator;
 pub mod types;
 
 use algo::{Page, PageGuard};
+pub use assign::{Client, Addr, Server, assign};
 pub use build::build;
 pub use bulkdelete::{bulkdelete, bulkdelete_vectors};
 pub use cache::cache;
@@ -64,4 +66,12 @@ pub(crate) struct Branch<T> {
     pub head: u16,
     pub norm: f32,
     pub extra: T,
+}
+
+pub struct Build {
+    pub op: assign::ffi::op_t::Type,
+    pub d: usize,
+    pub n: usize,
+    pub centroids: Vec<u8>,
+    pub labels: Vec<u32>,
 }

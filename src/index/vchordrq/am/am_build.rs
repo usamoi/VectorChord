@@ -26,9 +26,10 @@ use rand::Rng;
 use simd::{Floating, f16};
 use std::ffi::CStr;
 use std::ops::Deref;
-use vchordrq::types::*;
+use vchordrq::{Addr, types::*};
 use vector::VectorOwned;
 use vector::vect::VectOwned;
+use zerocopy::{FromBytes, IntoBytes};
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u16)]
@@ -266,8 +267,8 @@ pub unsafe extern "C-unwind" fn ambuild(
     if let Err(errors) = Validate::validate(&vchordrq_options) {
         pgrx::error!("error while validating options: {}", errors);
     }
-    let opfamily = unsafe { opfamily(index_relation) };
     let index = unsafe { PostgresRelation::new(index_relation) };
+    let opfamily = unsafe { opfamily(index_relation) };
     let heap = Heap {
         heap_relation,
         index_relation,
@@ -330,9 +331,14 @@ pub unsafe extern "C-unwind" fn ambuild(
         }
     };
     reporter.phase(BuildPhase::from_code(BuildPhaseCode::Build));
-    crate::index::vchordrq::algo::build(vector_options, vchordrq_options.index, &index, structures);
+    let build = crate::index::vchordrq::algo::build(
+        vector_options,
+        vchordrq_options.index,
+        &index,
+        structures,
+    );
     reporter.phase(BuildPhase::from_code(BuildPhaseCode::Inserting));
-    let cache = if vchordrq_options.build.pin {
+    let cached = if vchordrq_options.build.pin {
         let mut trace = vchordrq::cache(&index);
         trace.sort();
         trace.dedup();
@@ -349,15 +355,34 @@ pub unsafe extern "C-unwind" fn ambuild(
         }
     } else {
         vchordrq_cached::VchordrqCached::_0 {}
-    };
+    }
+    .serialize();
+    let mut server = None;
+    let gpu = if let VchordrqBuildDevice::Gpu { batch_size } = vchordrq_options.build.device {
+        let server = server.insert(unsafe {
+            vchordrq::Server::new(build.op, build.d, build.n, &build.centroids)
+                .expect("failed to enable gpu")
+        });
+        let addr = server.addr().expect("failed to enable gpu");
+        vchordrq_gpu::VchordrqGpu::_1 {
+            addr: addr.as_bytes().to_vec(),
+            m: batch_size.get() as usize,
+            labels: build.labels,
+        }
+    } else {
+        vchordrq_gpu::VchordrqGpu::_0 {}
+    }
+    .serialize();
     if let Some(leader) = unsafe {
         VchordrqLeader::enter(
             heap_relation,
             index_relation,
             (*index_info).ii_Concurrent,
-            cache,
+            &cached,
+            &gpu,
         )
     } {
+        drop(cached);
         unsafe {
             parallel_build(
                 index_relation,
@@ -366,6 +391,7 @@ pub unsafe extern "C-unwind" fn ambuild(
                 leader.tablescandesc,
                 leader.vchordrqshared,
                 leader.vchordrqcached,
+                leader.vchordrqgpu,
                 |indtuples| {
                     reporter.tuples_done(indtuples);
                 },
@@ -389,18 +415,19 @@ pub unsafe extern "C-unwind" fn ambuild(
             pgrx::pg_sys::ConditionVariableCancelSleep();
         }
     } else {
-        let mut indtuples = 0;
-        reporter.tuples_done(indtuples);
-        heap.traverse(true, |(ctid, store)| {
-            for (vector, extra) in store {
-                let key = ctid_to_key(ctid);
-                let payload = kv_to_pointer((key, extra));
-                crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
-            }
-            indtuples += 1;
-            reporter.tuples_done(indtuples);
-        });
-        reporter.tuples_total(indtuples);
+        unsafe {
+            let indtuples = sequential_build(
+                index_relation,
+                heap_relation,
+                index_info,
+                &cached,
+                &gpu,
+                |indtuples| {
+                    reporter.tuples_done(indtuples);
+                },
+            );
+            reporter.tuples_total(indtuples);
+        }
     }
     let check = || {
         pgrx::check_for_interrupts!();
@@ -427,138 +454,6 @@ struct VchordrqShared {
     indtuples: u64,
 }
 
-mod vchordrq_cached {
-    pub const ALIGN: usize = 8;
-    pub type Tag = u64;
-
-    use crate::index::storage::PostgresPage;
-    use algo::tuples::RefChecker;
-    use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
-
-    #[repr(C, align(8))]
-    #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
-    struct VchordrqCachedHeader0 {}
-
-    #[repr(C, align(8))]
-    #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
-    struct VchordrqCachedHeader1 {
-        mapping_s: usize,
-        mapping_e: usize,
-        pages_s: usize,
-        pages_e: usize,
-    }
-
-    pub enum VchordrqCached {
-        _0 {},
-        _1 {
-            mapping: Vec<u32>,
-            pages: Vec<Box<PostgresPage<vchordrq::Opaque>>>,
-        },
-    }
-
-    impl VchordrqCached {
-        pub fn serialize(&self) -> Vec<u8> {
-            let mut buffer = Vec::new();
-            match self {
-                VchordrqCached::_0 {} => {
-                    buffer.extend((0 as Tag).to_ne_bytes());
-                    buffer.extend(std::iter::repeat_n(0, size_of::<VchordrqCachedHeader0>()));
-                    buffer[size_of::<Tag>()..][..size_of::<VchordrqCachedHeader0>()]
-                        .copy_from_slice(VchordrqCachedHeader0 {}.as_bytes());
-                }
-                VchordrqCached::_1 { mapping, pages } => {
-                    buffer.extend((1 as Tag).to_ne_bytes());
-                    buffer.extend(std::iter::repeat_n(0, size_of::<VchordrqCachedHeader1>()));
-                    let mapping_s = buffer.len();
-                    buffer.extend(mapping.as_bytes());
-                    let mapping_e = buffer.len();
-                    while buffer.len() % ALIGN != 0 {
-                        buffer.push(0u8);
-                    }
-                    let pages_s = buffer.len();
-                    buffer.extend(pages.iter().flat_map(|x| unsafe {
-                        std::mem::transmute::<&PostgresPage<vchordrq::Opaque>, &[u8; 8192]>(
-                            x.as_ref(),
-                        )
-                    }));
-                    let pages_e = buffer.len();
-                    while buffer.len() % ALIGN != 0 {
-                        buffer.push(0u8);
-                    }
-                    buffer[size_of::<Tag>()..][..size_of::<VchordrqCachedHeader1>()]
-                        .copy_from_slice(
-                            VchordrqCachedHeader1 {
-                                mapping_s,
-                                mapping_e,
-                                pages_s,
-                                pages_e,
-                            }
-                            .as_bytes(),
-                        );
-                }
-            }
-            buffer
-        }
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    pub enum VchordrqCachedReader<'a> {
-        #[allow(dead_code)]
-        _0(VchordrqCachedReader0<'a>),
-        _1(VchordrqCachedReader1<'a>),
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    pub struct VchordrqCachedReader0<'a> {
-        #[allow(dead_code)]
-        header: &'a VchordrqCachedHeader0,
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    pub struct VchordrqCachedReader1<'a> {
-        #[allow(dead_code)]
-        header: &'a VchordrqCachedHeader1,
-        mapping: &'a [u32],
-        pages: &'a [PostgresPage<vchordrq::Opaque>],
-    }
-
-    impl<'a> VchordrqCachedReader1<'a> {
-        pub fn get(&self, id: u32) -> Option<&'a PostgresPage<vchordrq::Opaque>> {
-            let index = *self.mapping.get(id as usize)?;
-            if index == u32::MAX {
-                return None;
-            }
-            Some(&self.pages[index as usize])
-        }
-    }
-
-    impl<'a> VchordrqCachedReader<'a> {
-        pub fn deserialize_ref(source: &'a [u8]) -> Self {
-            let tag = u64::from_ne_bytes(std::array::from_fn(|i| source[i]));
-            match tag {
-                0 => {
-                    let checker = RefChecker::new(source);
-                    let header: &VchordrqCachedHeader0 = checker.prefix(size_of::<Tag>());
-                    Self::_0(VchordrqCachedReader0 { header })
-                }
-                1 => {
-                    let checker = RefChecker::new(source);
-                    let header: &VchordrqCachedHeader1 = checker.prefix(size_of::<Tag>());
-                    let mapping = checker.bytes(header.mapping_s, header.mapping_e);
-                    let pages =
-                        unsafe { checker.bytes_slice_unchecked(header.pages_s, header.pages_e) };
-                    Self::_1(VchordrqCachedReader1 {
-                        header,
-                        mapping,
-                        pages,
-                    })
-                }
-                _ => panic!("bad bytes"),
-            }
-        }
-    }
-}
-
 fn is_mvcc_snapshot(snapshot: *mut pgrx::pg_sys::SnapshotData) -> bool {
     matches!(
         unsafe { (*snapshot).snapshot_type },
@@ -574,6 +469,7 @@ struct VchordrqLeader {
     vchordrqshared: *mut VchordrqShared,
     tablescandesc: *mut pgrx::pg_sys::ParallelTableScanDescData,
     vchordrqcached: *const u8,
+    vchordrqgpu: *const u8,
 }
 
 impl VchordrqLeader {
@@ -581,12 +477,9 @@ impl VchordrqLeader {
         heap_relation: pgrx::pg_sys::Relation,
         index_relation: pgrx::pg_sys::Relation,
         isconcurrent: bool,
-        cache: vchordrq_cached::VchordrqCached,
+        vchordrq_cached: &[u8],
+        vchordrq_gpu: &[u8],
     ) -> Option<Self> {
-        let _cache = cache.serialize();
-        drop(cache);
-        let cache = _cache;
-
         unsafe fn compute_parallel_workers(
             heap_relation: pgrx::pg_sys::Relation,
             index_relation: pgrx::pg_sys::Relation,
@@ -648,7 +541,9 @@ impl VchordrqLeader {
             estimate_keys(&mut (*pcxt).estimator, 1);
             estimate_chunk(&mut (*pcxt).estimator, est_tablescandesc);
             estimate_keys(&mut (*pcxt).estimator, 1);
-            estimate_chunk(&mut (*pcxt).estimator, 8 + cache.len());
+            estimate_chunk(&mut (*pcxt).estimator, 8 + vchordrq_cached.len());
+            estimate_keys(&mut (*pcxt).estimator, 1);
+            estimate_chunk(&mut (*pcxt).estimator, 8 + vchordrq_gpu.len());
             estimate_keys(&mut (*pcxt).estimator, 1);
         }
 
@@ -690,9 +585,18 @@ impl VchordrqLeader {
         };
 
         let vchordrqcached = unsafe {
-            let x = pgrx::pg_sys::shm_toc_allocate((*pcxt).toc, 8 + cache.len()).cast::<u8>();
-            (x as *mut u64).write_unaligned(cache.len() as _);
-            std::ptr::copy(cache.as_ptr(), x.add(8), cache.len());
+            let x =
+                pgrx::pg_sys::shm_toc_allocate((*pcxt).toc, 8 + vchordrq_cached.len()).cast::<u8>();
+            (x as *mut u64).write_unaligned(vchordrq_cached.len() as _);
+            std::ptr::copy(vchordrq_cached.as_ptr(), x.add(8), vchordrq_cached.len());
+            x
+        };
+
+        let vchordrqgpu = unsafe {
+            let x =
+                pgrx::pg_sys::shm_toc_allocate((*pcxt).toc, 8 + vchordrq_gpu.len()).cast::<u8>();
+            (x as *mut u64).write_unaligned(vchordrq_gpu.len() as _);
+            std::ptr::copy(vchordrq_gpu.as_ptr(), x.add(8), vchordrq_gpu.len());
             x
         };
 
@@ -700,6 +604,7 @@ impl VchordrqLeader {
             pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000001, vchordrqshared.cast());
             pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000002, tablescandesc.cast());
             pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000003, vchordrqcached.cast());
+            pgrx::pg_sys::shm_toc_insert((*pcxt).toc, 0xA000000000000004, vchordrqgpu.cast());
         }
 
         unsafe {
@@ -727,6 +632,7 @@ impl VchordrqLeader {
             vchordrqshared,
             tablescandesc,
             vchordrqcached,
+            vchordrqgpu,
         })
     }
 
@@ -770,6 +676,11 @@ pub unsafe extern "C-unwind" fn vchordrq_parallel_build_main(
             .cast::<u8>()
             .cast_const()
     };
+    let vchordrqgpu = unsafe {
+        pgrx::pg_sys::shm_toc_lookup(toc, 0xA000000000000004, false)
+            .cast::<u8>()
+            .cast_const()
+    };
     let heap_lockmode;
     let index_lockmode;
     if unsafe { !(*vchordrqshared).isconcurrent } {
@@ -794,6 +705,7 @@ pub unsafe extern "C-unwind" fn vchordrq_parallel_build_main(
             tablescandesc,
             vchordrqshared,
             vchordrqcached,
+            vchordrqgpu,
             |_| (),
         );
     }
@@ -811,12 +723,18 @@ unsafe fn parallel_build(
     tablescandesc: *mut pgrx::pg_sys::ParallelTableScanDescData,
     vchordrqshared: *mut VchordrqShared,
     vchordrqcached: *const u8,
+    vchordrqgpu: *const u8,
     mut callback: impl FnMut(u64),
 ) {
     use vchordrq_cached::VchordrqCachedReader;
+    use vchordrq_gpu::VchordrqGpuReader;
     let cached = VchordrqCachedReader::deserialize_ref(unsafe {
         let bytes = (vchordrqcached as *const u64).read_unaligned();
         std::slice::from_raw_parts(vchordrqcached.add(8), bytes as _)
+    });
+    let gpu = VchordrqGpuReader::deserialize_ref(unsafe {
+        let bytes = (vchordrqgpu as *const u64).read_unaligned();
+        std::slice::from_raw_parts(vchordrqgpu.add(8), bytes as _)
     });
 
     let index = unsafe { PostgresRelation::new(index_relation) };
@@ -830,8 +748,9 @@ unsafe fn parallel_build(
         opfamily,
         scan,
     };
-    match cached {
-        VchordrqCachedReader::_0(_) => {
+
+    match (cached, gpu) {
+        (VchordrqCachedReader::_0(_), VchordrqGpuReader::_0(_)) => {
             heap.traverse(true, |(ctid, store)| {
                 for (vector, extra) in store {
                     let key = ctid_to_key(ctid);
@@ -850,7 +769,7 @@ unsafe fn parallel_build(
                 }
             });
         }
-        VchordrqCachedReader::_1(cached) => {
+        (VchordrqCachedReader::_1(cached), VchordrqGpuReader::_0(_)) => {
             let index = CachingRelation {
                 cache: cached,
                 relation: index,
@@ -873,6 +792,72 @@ unsafe fn parallel_build(
                 }
             });
         }
+        (VchordrqCachedReader::_0(_), VchordrqGpuReader::_1(gpu)) => {
+            let addr = Addr::ref_from_bytes(gpu.addr()).expect("failed to enable gpu");
+            let mut client = unsafe { vchordrq::Client::new(addr.clone(), gpu.m()) }
+                .expect("failed to enable gpu");
+            let mut assign = crate::index::vchordrq::algo::Assign::new(
+                opfamily,
+                &index,
+                gpu.m(),
+                &mut client,
+                gpu.labels(),
+            );
+            heap.traverse(true, |(ctid, store)| {
+                for (vector, extra) in store {
+                    let key = ctid_to_key(ctid);
+                    let payload = kv_to_pointer((key, extra));
+                    assign.push((payload, vector.clone(), extra));
+                    crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
+                }
+                unsafe {
+                    let indtuples;
+                    {
+                        pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                        (*vchordrqshared).indtuples += 1;
+                        indtuples = (*vchordrqshared).indtuples;
+                        pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                    }
+                    callback(indtuples);
+                }
+            });
+            assign.flush();
+        }
+        (VchordrqCachedReader::_1(cached), VchordrqGpuReader::_1(gpu)) => {
+            let addr = Addr::ref_from_bytes(gpu.addr()).expect("failed to enable gpu");
+            let mut client = unsafe { vchordrq::Client::new(addr.clone(), gpu.m()) }
+                .expect("failed to enable gpu");
+            let index = CachingRelation {
+                cache: cached,
+                relation: index,
+            };
+            let mut assign = crate::index::vchordrq::algo::Assign::new(
+                opfamily,
+                &index,
+                gpu.m(),
+                &mut client,
+                gpu.labels(),
+            );
+            heap.traverse(true, |(ctid, store)| {
+                for (vector, extra) in store {
+                    let key = ctid_to_key(ctid);
+                    let payload = kv_to_pointer((key, extra));
+                    assign.push((payload, vector.clone(), extra));
+                    crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
+                }
+                unsafe {
+                    let indtuples;
+                    {
+                        pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
+                        (*vchordrqshared).indtuples += 1;
+                        indtuples = (*vchordrqshared).indtuples;
+                        pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
+                    }
+                    callback(indtuples);
+                }
+            });
+            assign.flush();
+        }
     }
     unsafe {
         pgrx::pg_sys::SpinLockAcquire(&raw mut (*vchordrqshared).mutex);
@@ -880,6 +865,112 @@ unsafe fn parallel_build(
         pgrx::pg_sys::SpinLockRelease(&raw mut (*vchordrqshared).mutex);
         pgrx::pg_sys::ConditionVariableSignal(&raw mut (*vchordrqshared).workersdonecv);
     }
+}
+
+unsafe fn sequential_build(
+    index_relation: pgrx::pg_sys::Relation,
+    heap_relation: pgrx::pg_sys::Relation,
+    index_info: *mut pgrx::pg_sys::IndexInfo,
+    vchordrqcached: &[u8],
+    vchordrqgpu: &[u8],
+    mut callback: impl FnMut(u64),
+) -> u64 {
+    use vchordrq_cached::VchordrqCachedReader;
+    use vchordrq_gpu::VchordrqGpuReader;
+    let cached = VchordrqCachedReader::deserialize_ref(vchordrqcached);
+    let gpu = VchordrqGpuReader::deserialize_ref(vchordrqgpu);
+    let index = unsafe { PostgresRelation::new(index_relation) };
+
+    let opfamily = unsafe { opfamily(index_relation) };
+    let heap = Heap {
+        heap_relation,
+        index_relation,
+        index_info,
+        opfamily,
+        scan: std::ptr::null_mut(),
+    };
+
+    let mut indtuples = 0;
+    match (cached, gpu) {
+        (VchordrqCachedReader::_0(_), VchordrqGpuReader::_0(_)) => {
+            heap.traverse(true, |(ctid, store)| {
+                for (vector, extra) in store {
+                    let key = ctid_to_key(ctid);
+                    let payload = kv_to_pointer((key, extra));
+                    crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
+                }
+                indtuples += 1;
+                callback(indtuples);
+            });
+        }
+        (VchordrqCachedReader::_1(cached), VchordrqGpuReader::_0(_)) => {
+            let index = CachingRelation {
+                cache: cached,
+                relation: index,
+            };
+            heap.traverse(true, |(ctid, store)| {
+                for (vector, extra) in store {
+                    let key = ctid_to_key(ctid);
+                    let payload = kv_to_pointer((key, extra));
+                    crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
+                }
+                indtuples += 1;
+                callback(indtuples);
+            });
+        }
+        (VchordrqCachedReader::_0(_), VchordrqGpuReader::_1(gpu)) => {
+            let addr = Addr::ref_from_bytes(gpu.addr()).expect("failed to enable gpu");
+            let mut client: vchordrq::Client =
+                unsafe { vchordrq::Client::new(addr.clone(), gpu.m()) }
+                    .expect("failed to enable gpu");
+            let mut assign = crate::index::vchordrq::algo::Assign::new(
+                opfamily,
+                &index,
+                gpu.m(),
+                &mut client,
+                gpu.labels(),
+            );
+            heap.traverse(true, |(ctid, store)| {
+                for (vector, extra) in store {
+                    let key = ctid_to_key(ctid);
+                    let payload = kv_to_pointer((key, extra));
+                    assign.push((payload, vector.clone(), extra));
+                    crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
+                }
+                indtuples += 1;
+                callback(indtuples);
+            });
+            assign.flush();
+        }
+        (VchordrqCachedReader::_1(cached), VchordrqGpuReader::_1(gpu)) => {
+            let addr = Addr::ref_from_bytes(gpu.addr()).expect("failed to enable gpu");
+            let mut client = unsafe { vchordrq::Client::new(addr.clone(), gpu.m()) }
+                .expect("failed to enable gpu");
+            let index = CachingRelation {
+                cache: cached,
+                relation: index,
+            };
+            let mut assign = crate::index::vchordrq::algo::Assign::new(
+                opfamily,
+                &index,
+                gpu.m(),
+                &mut client,
+                gpu.labels(),
+            );
+            heap.traverse(true, |(ctid, store)| {
+                for (vector, extra) in store {
+                    let key = ctid_to_key(ctid);
+                    let payload = kv_to_pointer((key, extra));
+                    assign.push((payload, vector.clone(), extra));
+                    crate::index::vchordrq::algo::insert(opfamily, &index, payload, vector, true);
+                }
+                indtuples += 1;
+                callback(indtuples);
+            });
+            assign.flush();
+        }
+    }
+    indtuples
 }
 
 #[pgrx::pg_guard]
@@ -1311,5 +1402,267 @@ impl<R: RelationWrite<Page = PostgresPage<vchordrq::Opaque>>> RelationWrite
 
     fn search(&self, freespace: usize) -> Option<Self::WriteGuard<'_>> {
         self.relation.search(freespace)
+    }
+}
+
+mod vchordrq_cached {
+    pub const ALIGN: usize = 8;
+    pub type Tag = u64;
+
+    use crate::index::storage::PostgresPage;
+    use algo::tuples::RefChecker;
+    use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+
+    #[repr(C, align(8))]
+    #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+    struct VchordrqCachedHeader0 {}
+
+    #[repr(C, align(8))]
+    #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+    struct VchordrqCachedHeader1 {
+        mapping_s: usize,
+        mapping_e: usize,
+        pages_s: usize,
+        pages_e: usize,
+    }
+
+    pub enum VchordrqCached {
+        _0 {},
+        _1 {
+            mapping: Vec<u32>,
+            pages: Vec<Box<PostgresPage<vchordrq::Opaque>>>,
+        },
+    }
+
+    impl VchordrqCached {
+        pub fn serialize(&self) -> Vec<u8> {
+            let mut buffer = Vec::new();
+            match self {
+                VchordrqCached::_0 {} => {
+                    buffer.extend((0 as Tag).to_ne_bytes());
+                    buffer.extend(std::iter::repeat_n(0, size_of::<VchordrqCachedHeader0>()));
+                    buffer[size_of::<Tag>()..][..size_of::<VchordrqCachedHeader0>()]
+                        .copy_from_slice(VchordrqCachedHeader0 {}.as_bytes());
+                }
+                VchordrqCached::_1 { mapping, pages } => {
+                    buffer.extend((1 as Tag).to_ne_bytes());
+                    buffer.extend(std::iter::repeat_n(0, size_of::<VchordrqCachedHeader1>()));
+                    let mapping_s = buffer.len();
+                    buffer.extend(mapping.as_bytes());
+                    let mapping_e = buffer.len();
+                    while buffer.len() % ALIGN != 0 {
+                        buffer.push(0u8);
+                    }
+                    let pages_s = buffer.len();
+                    buffer.extend(pages.iter().flat_map(|x| unsafe {
+                        std::mem::transmute::<&PostgresPage<vchordrq::Opaque>, &[u8; 8192]>(
+                            x.as_ref(),
+                        )
+                    }));
+                    let pages_e = buffer.len();
+                    while buffer.len() % ALIGN != 0 {
+                        buffer.push(0u8);
+                    }
+                    buffer[size_of::<Tag>()..][..size_of::<VchordrqCachedHeader1>()]
+                        .copy_from_slice(
+                            VchordrqCachedHeader1 {
+                                mapping_s,
+                                mapping_e,
+                                pages_s,
+                                pages_e,
+                            }
+                            .as_bytes(),
+                        );
+                }
+            }
+            buffer
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum VchordrqCachedReader<'a> {
+        #[allow(dead_code)]
+        _0(VchordrqCachedReader0<'a>),
+        _1(VchordrqCachedReader1<'a>),
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct VchordrqCachedReader0<'a> {
+        #[allow(dead_code)]
+        header: &'a VchordrqCachedHeader0,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct VchordrqCachedReader1<'a> {
+        #[allow(dead_code)]
+        header: &'a VchordrqCachedHeader1,
+        mapping: &'a [u32],
+        pages: &'a [PostgresPage<vchordrq::Opaque>],
+    }
+
+    impl<'a> VchordrqCachedReader1<'a> {
+        pub fn get(&self, id: u32) -> Option<&'a PostgresPage<vchordrq::Opaque>> {
+            let index = *self.mapping.get(id as usize)?;
+            if index == u32::MAX {
+                return None;
+            }
+            Some(&self.pages[index as usize])
+        }
+    }
+
+    impl<'a> VchordrqCachedReader<'a> {
+        pub fn deserialize_ref(source: &'a [u8]) -> Self {
+            let tag = u64::from_ne_bytes(std::array::from_fn(|i| source[i]));
+            match tag {
+                0 => {
+                    let checker = RefChecker::new(source);
+                    let header: &VchordrqCachedHeader0 = checker.prefix(size_of::<Tag>());
+                    Self::_0(VchordrqCachedReader0 { header })
+                }
+                1 => {
+                    let checker = RefChecker::new(source);
+                    let header: &VchordrqCachedHeader1 = checker.prefix(size_of::<Tag>());
+                    let mapping = checker.bytes(header.mapping_s, header.mapping_e);
+                    let pages =
+                        unsafe { checker.bytes_slice_unchecked(header.pages_s, header.pages_e) };
+                    Self::_1(VchordrqCachedReader1 {
+                        header,
+                        mapping,
+                        pages,
+                    })
+                }
+                _ => panic!("bad bytes"),
+            }
+        }
+    }
+}
+
+mod vchordrq_gpu {
+    pub const ALIGN: usize = 8;
+    pub type Tag = u64;
+
+    use algo::tuples::RefChecker;
+    use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+
+    #[repr(C, align(8))]
+    #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+    struct VchordrqGpuHeader0 {}
+
+    #[repr(C, align(8))]
+    #[derive(Debug, Clone, PartialEq, FromBytes, IntoBytes, Immutable, KnownLayout)]
+    struct VchordrqGpuHeader1 {
+        addr_s: usize,
+        addr_e: usize,
+        m: usize,
+        labels_s: usize,
+        labels_e: usize,
+    }
+
+    pub enum VchordrqGpu {
+        _0 {},
+        _1 {
+            addr: Vec<u8>,
+            m: usize,
+            labels: Vec<u32>,
+        },
+    }
+
+    impl VchordrqGpu {
+        pub fn serialize(&self) -> Vec<u8> {
+            let mut buffer = Vec::new();
+            match self {
+                VchordrqGpu::_0 {} => {
+                    buffer.extend((0 as Tag).to_ne_bytes());
+                    buffer.extend(std::iter::repeat_n(0, size_of::<VchordrqGpuHeader0>()));
+                    buffer[size_of::<Tag>()..][..size_of::<VchordrqGpuHeader0>()]
+                        .copy_from_slice(VchordrqGpuHeader0 {}.as_bytes());
+                }
+                VchordrqGpu::_1 { addr, m, labels } => {
+                    buffer.extend((1 as Tag).to_ne_bytes());
+                    buffer.extend(std::iter::repeat_n(0, size_of::<VchordrqGpuHeader1>()));
+                    let addr_s = buffer.len();
+                    buffer.extend(addr.as_bytes());
+                    let addr_e = buffer.len();
+                    while buffer.len() % ALIGN != 0 {
+                        buffer.push(0u8);
+                    }
+                    let labels_s = buffer.len();
+                    buffer.extend(labels.as_bytes());
+                    let labels_e = buffer.len();
+                    while buffer.len() % ALIGN != 0 {
+                        buffer.push(0u8);
+                    }
+                    buffer[size_of::<Tag>()..][..size_of::<VchordrqGpuHeader1>()].copy_from_slice(
+                        VchordrqGpuHeader1 {
+                            addr_s: addr_s,
+                            addr_e: addr_e,
+                            m: *m,
+                            labels_s,
+                            labels_e,
+                        }
+                        .as_bytes(),
+                    );
+                }
+            }
+            buffer
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub enum VchordrqGpuReader<'a> {
+        #[allow(dead_code)]
+        _0(VchordrqGpuReader0<'a>),
+        _1(VchordrqGpuReader1<'a>),
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct VchordrqGpuReader0<'a> {
+        #[allow(dead_code)]
+        header: &'a VchordrqGpuHeader0,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct VchordrqGpuReader1<'a> {
+        #[allow(dead_code)]
+        header: &'a VchordrqGpuHeader1,
+        addr: &'a [u8],
+        labels: &'a [u32],
+    }
+
+    impl<'a> VchordrqGpuReader1<'a> {
+        pub fn addr(&self) -> &'a [u8] {
+            self.addr
+        }
+        pub fn m(&self) -> usize {
+            self.header.m
+        }
+        pub fn labels(&self) -> &'a [u32] {
+            self.labels
+        }
+    }
+
+    impl<'a> VchordrqGpuReader<'a> {
+        pub fn deserialize_ref(source: &'a [u8]) -> Self {
+            let tag = u64::from_ne_bytes(std::array::from_fn(|i| source[i]));
+            match tag {
+                0 => {
+                    let checker = RefChecker::new(source);
+                    let header: &VchordrqGpuHeader0 = checker.prefix(size_of::<Tag>());
+                    Self::_0(VchordrqGpuReader0 { header })
+                }
+                1 => {
+                    let checker = RefChecker::new(source);
+                    let header: &VchordrqGpuHeader1 = checker.prefix(size_of::<Tag>());
+                    let addr = checker.bytes(header.addr_s, header.addr_e);
+                    let labels = checker.bytes(header.labels_s, header.labels_e);
+                    Self::_1(VchordrqGpuReader1 {
+                        header,
+                        addr,
+                        labels,
+                    })
+                }
+                _ => panic!("bad bytes"),
+            }
+        }
     }
 }

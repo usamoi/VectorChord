@@ -13,6 +13,7 @@
 // Copyright (c) 2025 TensorChord Inc.
 
 use serde::{Deserialize, Serialize};
+use std::num::NonZero;
 use validator::{Validate, ValidationError, ValidationErrors};
 use vchordrq::types::VchordrqIndexOptions;
 
@@ -104,6 +105,23 @@ impl Validate for VchordrqBuildSourceOptions {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "snake_case")]
+pub enum VchordrqBuildDevice {
+    #[default]
+    Cpu,
+    Gpu {
+        batch_size: NonZero<u32>,
+    },
+}
+
+impl Validate for VchordrqBuildDevice {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
 #[serde(rename_all = "snake_case")]
@@ -113,11 +131,16 @@ pub struct VchordrqBuildOptions {
     pub source: VchordrqBuildSourceOptions,
     #[serde(default = "VchordrqBuildOptions::default_pin")]
     pub pin: bool,
+    #[serde(default = "VchordrqBuildOptions::default_device")]
+    pub device: VchordrqBuildDevice,
 }
 
 impl VchordrqBuildOptions {
     pub fn default_pin() -> bool {
         false
+    }
+    pub fn default_device() -> VchordrqBuildDevice {
+        VchordrqBuildDevice::Cpu
     }
 }
 
