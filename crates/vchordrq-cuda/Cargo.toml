@@ -1,0 +1,12 @@
+[package]
+name = "vchord-cuda"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { version = "1.0.99", features = ["backtrace"] }
+bincode.workspace = true
+vchordrq = { path = "../vchordrq" }
+
+[build-dependencies]
+cc.workspace = true

@@ -116,7 +116,8 @@ pub fn build<R>(
     vchordrq_options: VchordrqIndexOptions,
     index: &R,
     structures: Vec<Structure<Vec<f32>>>,
-) where
+) -> vchordrq::Build
+where
     R: RelationRead + RelationWrite,
     R::Page: Page<Opaque = Opaque>,
 {

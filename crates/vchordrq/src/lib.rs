@@ -33,6 +33,8 @@ mod vectors;
 pub mod operator;
 pub mod types;
 
+pub mod cuda;
+
 use algo::{Page, PageGuard};
 pub use build::build;
 pub use bulkdelete::{bulkdelete, bulkdelete_vectors};
@@ -64,4 +66,12 @@ pub(crate) struct Branch<T> {
     pub head: u16,
     pub norm: f32,
     pub extra: T,
+}
+
+pub struct Build {
+    pub op: cuda::ffi::op_t::Type,
+    pub d: usize,
+    pub n: usize,
+    pub centroids: Vec<u8>,
+    pub labels: Vec<u32>,
 }
