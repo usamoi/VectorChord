@@ -126,11 +126,17 @@ pub struct VchordrqBuildOptions {
     pub source: VchordrqBuildSourceOptions,
     #[serde(default = "VchordrqBuildOptions::default_pin")]
     pub pin: bool,
+    #[serde(default = "VchordrqBuildOptions::default_pin_level")]
+    #[validate(range(min = -1, max = 2))]
+    pub pin_level: i32,
 }
 
 impl VchordrqBuildOptions {
     pub fn default_pin() -> bool {
         false
+    }
+    pub fn default_pin_level() -> i32 {
+        1
     }
 }
 

@@ -15,6 +15,7 @@
 mod build;
 mod bulkdelete;
 mod cache;
+mod centroids;
 mod closure_lifetime_binder;
 mod cost;
 mod fast_heap;
