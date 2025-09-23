@@ -826,6 +826,9 @@ unsafe fn parallel_build(
 ) {
     use vchordrq_cached::VchordrqCachedReader;
 
+    let pid = std::process::id();
+    let rng = |slice: &[u32]| slice[pid as usize % slice.len()];
+
     let cached = VchordrqCachedReader::deserialize_ref(unsafe {
         let bytes = (vchordrqcached as *const u64).read_unaligned();
         std::slice::from_raw_parts(vchordrqcached.add(8), bytes as _)
@@ -849,7 +852,7 @@ unsafe fn parallel_build(
                     let key = ctid_to_key(ctid);
                     let payload = kv_to_pointer((key, extra));
                     crate::index::vchordrq::algo::insert(
-                        opfamily, &index, payload, vector, true, true,
+                        opfamily, &index, payload, vector, true, true, rng,
                     );
                 }
                 unsafe {
@@ -874,7 +877,7 @@ unsafe fn parallel_build(
                     let key = ctid_to_key(ctid);
                     let payload = kv_to_pointer((key, extra));
                     crate::index::vchordrq::algo::insert(
-                        opfamily, &index, payload, vector, true, true,
+                        opfamily, &index, payload, vector, true, true, rng,
                     );
                 }
                 unsafe {
@@ -928,7 +931,13 @@ unsafe fn sequential_build(
                     let key = ctid_to_key(ctid);
                     let payload = kv_to_pointer((key, extra));
                     crate::index::vchordrq::algo::insert(
-                        opfamily, &index, payload, vector, true, true,
+                        opfamily,
+                        &index,
+                        payload,
+                        vector,
+                        true,
+                        true,
+                        |_| 0,
                     );
                 }
                 indtuples += 1;
@@ -945,7 +954,13 @@ unsafe fn sequential_build(
                     let key = ctid_to_key(ctid);
                     let payload = kv_to_pointer((key, extra));
                     crate::index::vchordrq::algo::insert(
-                        opfamily, &index, payload, vector, true, true,
+                        opfamily,
+                        &index,
+                        payload,
+                        vector,
+                        true,
+                        true,
+                        |_| 0,
                     );
                 }
                 indtuples += 1;

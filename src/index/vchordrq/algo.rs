@@ -155,12 +155,12 @@ pub fn insert<R>(
     vector: OwnedVector,
     skip_freespaces: bool,
     skip_search: bool,
+    mut rng: impl FnMut(&[u32]) -> u32,
 ) where
     R: RelationRead + RelationWrite,
     R::Page: Page<Opaque = Opaque>,
 {
     let bump = bumpalo::Bump::new();
-    let mut rng = rand::rng();
     let make_h1_plain_prefetcher = MakeH1PlainPrefetcherForInsertion { index };
     match (vector, opfamily.distance_kind()) {
         (OwnedVector::Vecf32(vector), DistanceKind::L2S) => {

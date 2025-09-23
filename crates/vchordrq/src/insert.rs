@@ -23,7 +23,6 @@ use algo::prefetcher::{Prefetcher, PrefetcherHeapFamily};
 use algo::{BorrowedIter, Bump, RelationRead, RelationWrite};
 use always_equal::AlwaysEqual;
 use distance::Distance;
-use rand::seq::IndexedRandom;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::num::NonZero;
@@ -35,7 +34,7 @@ pub fn insert_vector<R: RelationRead + RelationWrite, O: Operator>(
     index: &R,
     payload: NonZero<u64>,
     vector: <O::Vector as VectorOwned>::Borrowed<'_>,
-    rng: &mut impl rand::Rng,
+    rng: &mut impl FnMut(&[u32]) -> u32,
     skip_search: bool,
 ) -> (Vec<u32>, u16)
 where
@@ -47,10 +46,7 @@ where
     let dims = meta_tuple.dims();
     let rerank_in_heap = meta_tuple.rerank_in_heap();
     assert_eq!(dims, vector.dims(), "unmatched dimensions");
-    let vectors_first = *meta_tuple
-        .vectors_first()
-        .choose(rng)
-        .expect("data corruption");
+    let vectors_first = rng(meta_tuple.vectors_first());
 
     drop(meta_guard);
 
