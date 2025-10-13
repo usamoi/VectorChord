@@ -83,6 +83,8 @@ static VCHORDRQ_IO_RERANK: GucSetting<PostgresIo> = GucSetting::<PostgresIo>::ne
     PostgresIo::ReadStream,
 );
 
+static VCHORDRQ_MAX_PARALLEL_VACUUM_WORKERS: GucSetting<i32> = GucSetting::<i32>::new(0);
+
 pub fn init() {
     GucRegistry::define_bool_guc(
         c"vchordrq.enable_scan",
@@ -189,6 +191,16 @@ pub fn init() {
         &VCHORDRQ_QUERY_SAMPLING_RATE,
         0.0,
         1.0,
+        GucContext::Suset,
+        GucFlags::default(),
+    );
+    GucRegistry::define_int_guc(
+        c"vchordrq.max_parallel_vacuum_workers",
+        c"`max_parallel_vacuum_workers` argument of vchordrq.",
+        c"`max_parallel_vacuum_workers` argument of vchordrq.",
+        &VCHORDRQ_MAX_PARALLEL_VACUUM_WORKERS,
+        0,
+        255,
         GucContext::Suset,
         GucFlags::default(),
     );
@@ -376,4 +388,8 @@ pub fn vchordrq_query_sampling_max_records() -> u32 {
 
 pub fn vchordrq_query_sampling_rate() -> f64 {
     VCHORDRQ_QUERY_SAMPLING_RATE.get()
+}
+
+pub fn vchordrq_max_parallel_vacuum_workers() -> i32 {
+    VCHORDRQ_MAX_PARALLEL_VACUUM_WORKERS.get()
 }
