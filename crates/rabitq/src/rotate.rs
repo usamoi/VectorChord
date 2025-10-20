@@ -14,7 +14,6 @@
 
 const BITS: &[u8; 262144] = include_bytes!(concat!(env!("OUT_DIR"), "/bits"));
 
-#[cfg(target_endian = "little")]
 const _: () = {
     assert!(BITS[0] == 246);
     assert!(BITS[1] == 133);
@@ -26,22 +25,10 @@ const _: () = {
     assert!(BITS[7] == 115);
 };
 
-#[cfg(target_endian = "big")]
-const _: () = {
-    assert!(BITS[7] == 246);
-    assert!(BITS[6] == 133);
-    assert!(BITS[5] == 163);
-    assert!(BITS[4] == 106);
-    assert!(BITS[3] == 54);
-    assert!(BITS[2] == 126);
-    assert!(BITS[1] == 9);
-    assert!(BITS[0] == 115);
-};
-
-static BITS_0: [u64; 1024] = zerocopy::transmute!(BITS.as_chunks::<8192>().0[0]);
-static BITS_1: [u64; 1024] = zerocopy::transmute!(BITS.as_chunks::<8192>().0[1]);
-static BITS_2: [u64; 1024] = zerocopy::transmute!(BITS.as_chunks::<8192>().0[2]);
-static BITS_3: [u64; 1024] = zerocopy::transmute!(BITS.as_chunks::<8192>().0[3]);
+static BITS_0: [u8; 8192] = BITS.as_chunks::<8192>().0[0];
+static BITS_1: [u8; 8192] = BITS.as_chunks::<8192>().0[1];
+static BITS_2: [u8; 8192] = BITS.as_chunks::<8192>().0[2];
+static BITS_3: [u8; 8192] = BITS.as_chunks::<8192>().0[3];
 
 fn kacs_walk(result: &mut [f32]) {
     let n = result.len();
