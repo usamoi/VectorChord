@@ -12,7 +12,7 @@
 //
 // Copyright (c) 2025 TensorChord Inc.
 
-use clap::{Args, Parser, Subcommand};
+use clap::Parser;
 use object::{Object, ObjectSymbol};
 use std::collections::{HashMap, HashSet};
 use std::env::var_os;
@@ -23,18 +23,7 @@ use std::process::{Command, Stdio};
 
 #[derive(Parser)]
 struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    Build(BuildArgs),
-}
-
-#[derive(Args)]
-struct BuildArgs {
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "./build")]
     output: String,
     #[arg(long, default_value = target_triple::TARGET, env = "TARGET")]
     target: String,
@@ -346,88 +335,83 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("The script must be run from the VectorChord source directory.".into());
     }
     let vchord_version = control_file("./vchord.control")?["default_version"].clone();
-    match cli.command {
-        Commands::Build(BuildArgs {
-            output,
-            target,
-            profile,
-            runner,
-        }) => {
-            let runner = runner.and_then(|runner| shlex::split(&runner));
-            let path = if let Some(value) = var_os("PGRX_PG_CONFIG_PATH") {
-                PathBuf::from(value)
+    let Cli {
+        output,
+        target,
+        profile,
+        runner,
+    } = cli;
+    let runner = runner.and_then(|runner| shlex::split(&runner));
+    let path = if let Some(value) = var_os("PGRX_PG_CONFIG_PATH") {
+        PathBuf::from(value)
+    } else {
+        return Err("Environment variable `PGRX_PG_CONFIG_PATH` is not set.".into());
+    };
+    let pg_config = pg_config(&path)?;
+    let pg_version = {
+        let version = pg_config["VERSION"].clone();
+        if let Some(prefix_stripped) = version.strip_prefix("PostgreSQL ") {
+            if let Some((stripped, _)) = prefix_stripped.split_once(|c: char| !c.is_ascii_digit()) {
+                format!("pg{stripped}",)
             } else {
-                return Err("Environment variable `PGRX_PG_CONFIG_PATH` is not set.".into());
-            };
-            let pg_config = pg_config(&path)?;
-            let pg_version = {
-                let version = pg_config["VERSION"].clone();
-                if let Some(prefix_stripped) = version.strip_prefix("PostgreSQL ") {
-                    if let Some((stripped, _)) =
-                        prefix_stripped.split_once(|c: char| !c.is_ascii_digit())
-                    {
-                        format!("pg{stripped}",)
-                    } else {
-                        format!("pg{prefix_stripped}",)
-                    }
-                } else {
-                    return Err("PostgreSQL version is invalid.".into());
-                }
-            };
-            let postmaster = format!("{}/postgres", pg_config["BINDIR"]);
-            let tsi = target_specific_information(&target)?;
-            let obj = build(&path, &pg_version, &tsi, &profile, &target)?;
-            let pkglibdir = format!("{output}/pkglibdir");
-            let sharedir = format!("{output}/sharedir");
-            let sharedir_extension = format!("{sharedir}/extension");
-            if std::fs::exists(&output)? {
-                std::fs::remove_dir_all(&output)?;
+                format!("pg{prefix_stripped}",)
             }
-            std::fs::create_dir_all(&output)?;
-            std::fs::create_dir_all(&pkglibdir)?;
-            std::fs::create_dir_all(&sharedir)?;
-            std::fs::create_dir_all(&sharedir_extension)?;
+        } else {
+            return Err("PostgreSQL version is invalid.".into());
+        }
+    };
+    let postmaster = format!("{}/postgres", pg_config["BINDIR"]);
+    let tsi = target_specific_information(&target)?;
+    let obj = build(&path, &pg_version, &tsi, &profile, &target)?;
+    let pkglibdir = format!("{output}/pkglibdir");
+    let sharedir = format!("{output}/sharedir");
+    let sharedir_extension = format!("{sharedir}/extension");
+    if std::fs::exists(&output)? {
+        std::fs::remove_dir_all(&output)?;
+    }
+    std::fs::create_dir_all(&output)?;
+    std::fs::create_dir_all(&pkglibdir)?;
+    std::fs::create_dir_all(&sharedir)?;
+    std::fs::create_dir_all(&sharedir_extension)?;
+    install_by_copying(
+        &obj,
+        format!("{pkglibdir}/vchord{}", tsi.ext_suffix(&pg_version)?),
+        true,
+    )?;
+    install_by_copying(
+        "./vchord.control",
+        format!("{sharedir}/extension/vchord.control"),
+        false,
+    )?;
+    if vchord_version != "0.0.0" {
+        for e in read_dir("./sql/upgrade")?.collect::<Result<Vec<_>, _>>()? {
             install_by_copying(
-                &obj,
-                format!("{pkglibdir}/vchord{}", tsi.ext_suffix(&pg_version)?),
-                true,
-            )?;
-            install_by_copying(
-                "./vchord.control",
-                format!("{sharedir}/extension/vchord.control"),
+                e.path(),
+                format!("{sharedir}/extension/{}", e.file_name().display()),
                 false,
             )?;
-            if vchord_version != "0.0.0" {
-                for e in read_dir("./sql/upgrade")?.collect::<Result<Vec<_>, _>>()? {
-                    install_by_copying(
-                        e.path(),
-                        format!("{sharedir}/extension/{}", e.file_name().display()),
-                        false,
-                    )?;
-                }
-                install_by_copying(
-                    format!("./sql/install/vchord--{vchord_version}.sql"),
-                    format!("{sharedir}/extension/vchord--{vchord_version}.sql"),
-                    false,
-                )?;
-            } else {
-                let exports = parse(&tsi, obj)?;
-                install_by_writing(
-                    generate(
-                        &runner,
-                        &path,
-                        &pg_version,
-                        &tsi,
-                        &profile,
-                        &target,
-                        exports,
-                        postmaster,
-                    )?,
-                    format!("{sharedir_extension}/vchord--0.0.0.sql"),
-                    false,
-                )?;
-            }
         }
+        install_by_copying(
+            format!("./sql/install/vchord--{vchord_version}.sql"),
+            format!("{sharedir}/extension/vchord--{vchord_version}.sql"),
+            false,
+        )?;
+    } else {
+        let exports = parse(&tsi, obj)?;
+        install_by_writing(
+            generate(
+                &runner,
+                &path,
+                &pg_version,
+                &tsi,
+                &profile,
+                &target,
+                exports,
+                postmaster,
+            )?,
+            format!("{sharedir_extension}/vchord--0.0.0.sql"),
+            false,
+        )?;
     }
     Ok(())
 }

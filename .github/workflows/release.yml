@@ -91,10 +91,10 @@ jobs:
         run: |
           make PG_CONFIG=$PG_CONFIG build
 
-          (cd ./build/raw && zip -r ../postgresql-${VERSION}-vchord_${SEMVER}_${ARCH}-linux-gnu.zip .)
+          (cd ./build && zip -r ~/postgresql-${VERSION}-vchord_${SEMVER}_${ARCH}-linux-gnu.zip .)
 
-          make DESTDIR="./build/deb" install
-          mkdir -p ./build/deb/DEBIAN
+          make DESTDIR="~/debian" install
+          mkdir -p ~/debian/DEBIAN
           echo "Package: postgresql-${VERSION}-vchord
           Version: ${SEMVER}-1
           Depends: postgresql-${VERSION}, libgcc-s1, libc6 (>= 2.35)
@@ -105,9 +105,9 @@ jobs:
           Description: Vector database plugin for Postgres, written in Rust, specifically designed for LLM
           Homepage: https://vectorchord.ai/
           License: AGPL-3.0-only or Elastic-2.0" \
-          > ./build/deb/DEBIAN/control
-          (cd ./build/deb && find usr -type f -print0 | xargs -0 md5sum) > ./build/deb/DEBIAN/md5sums
-          dpkg-deb --root-owner-group -Zxz --build ./build/deb/ ./build/postgresql-${VERSION}-vchord_${SEMVER}-1_${PLATFORM}.deb
+          > ~/debian/DEBIAN/control
+          (cd ~/debian && find usr -type f -print0 | xargs -0 md5sum) > .~/debian/DEBIAN/md5sums
+          dpkg-deb --root-owner-group -Zxz --build ~/debian ~/postgresql-${VERSION}-vchord_${SEMVER}-1_${PLATFORM}.deb
 
       - name: Upload Artifacts
         env:
@@ -117,8 +117,8 @@ jobs:
           ARCH: ${{ matrix.arch }}
           PLATFORM: ${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }}
         run: |
-          gh release upload --clobber $SEMVER ./build/postgresql-${VERSION}-vchord_${SEMVER}-1_${PLATFORM}.deb
-          gh release upload --clobber $SEMVER ./build/postgresql-${VERSION}-vchord_${SEMVER}_${ARCH}-linux-gnu.zip
+          gh release upload --clobber $SEMVER ~/postgresql-${VERSION}-vchord_${SEMVER}-1_${PLATFORM}.deb
+          gh release upload --clobber $SEMVER ~/postgresql-${VERSION}-vchord_${SEMVER}_${ARCH}-linux-gnu.zip
 
   pgxn:
     runs-on: "ubuntu-latest"
