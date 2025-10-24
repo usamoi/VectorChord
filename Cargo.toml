@@ -34,6 +34,7 @@ vchordg = { path = "./crates/vchordg" }
 vchordrq = { path = "./crates/vchordrq" }
 vector = { path = "./crates/vector" }
 
+arrayvec = "0.7.6"
 bumpalo.workspace = true
 dary_heap.workspace = true
 paste.workspace = true
@@ -63,7 +64,7 @@ version = "0.0.0"
 edition = "2024"
 
 [workspace.dependencies]
-bumpalo = "3.19.0"
+bumpalo = { version = "3.19.0", features = ["boxed"] }
 dary_heap = "0.3.8"
 paste = "1.0.15"
 rand = "0.9.2"

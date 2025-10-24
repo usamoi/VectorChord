@@ -134,7 +134,7 @@ pub unsafe extern "C-unwind" fn ambuild(
         let errors = "alpha not equal to `1.0` are only applicable to l2 and cosine distance.";
         pgrx::warning!("warning while validating options: {errors}");
     }
-    let index = unsafe { PostgresRelation::new(index_relation) };
+    let index = unsafe { PostgresRelation::new(index_relation, 16) };
     let reporter = PostgresReporter {
         _phantom: PhantomData,
     };
@@ -467,7 +467,7 @@ unsafe fn parallel_build(
         std::slice::from_raw_parts(vchordgcached.add(8), bytes as _)
     });
 
-    let index = unsafe { PostgresRelation::new(index_relation) };
+    let index = unsafe { PostgresRelation::new(index_relation, 16) };
 
     let scan = unsafe { pgrx::pg_sys::table_beginscan_parallel(heap_relation, tablescandesc) };
     let opfamily = unsafe { opfamily(index_relation) };
@@ -516,7 +516,7 @@ unsafe fn sequential_build(
 ) -> u64 {
     use vchordg_cached::VchordgCachedReader;
     let cached = VchordgCachedReader::deserialize_ref(vchordgcached);
-    let index = unsafe { PostgresRelation::new(index_relation) };
+    let index = unsafe { PostgresRelation::new(index_relation, 16) };
 
     let opfamily = unsafe { opfamily(index_relation) };
     let traverser = unsafe {

@@ -255,16 +255,31 @@ impl<O: Opaque> Drop for PostgresBufferWriteGuard<O> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PostgresRelation<Opaque> {
     raw: pgrx::pg_sys::Relation,
+    free_cap: usize,
+    free: std::cell::RefCell<arrayvec::ArrayVec<i32, 16>>,
     _phantom: PhantomData<fn(Opaque) -> Opaque>,
 }
 
+impl<Opaque> Drop for PostgresRelation<Opaque> {
+    fn drop(&mut self) {
+        for &buffer in self.free.get_mut().iter() {
+            unsafe {
+                pgrx::pg_sys::ReleaseBuffer(buffer);
+            }
+        }
+    }
+}
+
 impl<Opaque> PostgresRelation<Opaque> {
-    pub unsafe fn new(raw: pgrx::pg_sys::Relation) -> Self {
+    pub unsafe fn new(raw: pgrx::pg_sys::Relation, free_cap: usize) -> Self {
+        assert!(free_cap >= 1 && free_cap <= 16);
         Self {
             raw,
+            free_cap,
+            free: std::cell::RefCell::new(arrayvec::ArrayVec::new()),
             _phantom: PhantomData,
         }
     }
@@ -364,20 +379,34 @@ impl<O: Opaque> RelationWrite for PostgresRelation<O> {
             }
             #[cfg(any(feature = "pg16", feature = "pg17", feature = "pg18"))]
             {
-                use pgrx::pg_sys::{
-                    BufferManagerRelation, ExtendBufferedFlags, ExtendBufferedRel, ForkNumber,
-                };
-                let bmr = BufferManagerRelation {
-                    rel: self.raw,
-                    smgr: std::ptr::null_mut(),
-                    relpersistence: 0,
-                };
-                buf = ExtendBufferedRel(
-                    bmr,
-                    ForkNumber::MAIN_FORKNUM,
-                    std::ptr::null_mut(),
-                    ExtendBufferedFlags::EB_LOCK_FIRST as _,
-                );
+                use pgrx::pg_sys::{BUFFER_LOCK_EXCLUSIVE, LockBuffer};
+                let mut free = self.free.borrow_mut();
+                if let Some(x) = free.pop() {
+                    buf = x;
+                    LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE as _);
+                } else {
+                    use pgrx::pg_sys::{BufferManagerRelation, ExtendBufferedRelBy, ForkNumber};
+                    let bmr = BufferManagerRelation {
+                        rel: self.raw,
+                        smgr: std::ptr::null_mut(),
+                        relpersistence: 0,
+                    };
+                    let mut len = 0_u32;
+                    _ = ExtendBufferedRelBy(
+                        bmr,
+                        ForkNumber::MAIN_FORKNUM,
+                        std::ptr::null_mut(),
+                        0,
+                        free.capacity().min(self.free_cap) as _,
+                        free.as_mut_ptr(),
+                        &raw mut len,
+                    );
+                    free.set_len(len as _);
+                    free.reverse();
+                    let x = free.pop().expect("size is zero");
+                    buf = x;
+                    LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE as _);
+                }
             }
             let state = GenericXLogStart(self.raw);
             let mut page = NonNull::new(

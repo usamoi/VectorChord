@@ -292,7 +292,7 @@ pub unsafe extern "C-unwind" fn ambuild(
         }
     }
     reporter.phase(BuildPhase::from_code(BuildPhaseCode::Build));
-    let index = unsafe { PostgresRelation::new(index_relation) };
+    let index = unsafe { PostgresRelation::new(index_relation, 16) };
     crate::index::vchordrq::dispatch::build(
         vector_options,
         vchordrq_options.index,
@@ -978,7 +978,7 @@ unsafe fn parallel_build(
         std::slice::from_raw_parts(vchordrqcached.add(8), bytes as _)
     });
 
-    let index = unsafe { PostgresRelation::new(index_relation) };
+    let index = unsafe { PostgresRelation::new(index_relation, 16) };
 
     let scan = unsafe { pgrx::pg_sys::table_beginscan_parallel(heap_relation, tablescandesc) };
     let opfamily = unsafe { opfamily(index_relation) };
@@ -1047,7 +1047,7 @@ unsafe fn parallel_build(
         VchordrqCachedReader::_1(cached) => {
             let index = CachingRelation {
                 cache: cached,
-                relation: index.clone(),
+                relation: index,
             };
             traverser.traverse(true, |tuple: &mut dyn crate::index::traverse::Tuple| {
                 let ctid = tuple.id();
@@ -1088,6 +1088,8 @@ unsafe fn parallel_build(
 
     sync_1(unsafe { (*vchordrqshared).indtuples });
 
+    let index = unsafe { PostgresRelation::new(index_relation, 16) };
+
     let mut chooser = ChooseSome {
         n: unsafe { (*vchordrqshared).nparticipants as usize },
         k: order as usize,
@@ -1111,7 +1113,7 @@ unsafe fn sequential_build(
 
     let cached = VchordrqCachedReader::deserialize_ref(vchordrqcached);
 
-    let index = unsafe { PostgresRelation::new(index_relation) };
+    let index = unsafe { PostgresRelation::new(index_relation, 16) };
 
     let opfamily = unsafe { opfamily(index_relation) };
     let traverser = unsafe {
@@ -1176,7 +1178,7 @@ unsafe fn sequential_build(
         VchordrqCachedReader::_1(cached) => {
             let index = CachingRelation {
                 cache: cached,
-                relation: index.clone(),
+                relation: index,
             };
             traverser.traverse(true, |tuple: &mut dyn crate::index::traverse::Tuple| {
                 let ctid = tuple.id();
@@ -1208,6 +1210,8 @@ unsafe fn sequential_build(
     }
 
     sync_1(indtuples);
+
+    let index = unsafe { PostgresRelation::new(index_relation, 16) };
 
     let mut chooser = ChooseAll;
     crate::index::vchordrq::dispatch::maintain(opfamily, &index, &mut chooser, check);

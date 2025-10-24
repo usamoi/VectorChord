@@ -47,7 +47,7 @@ unsafe fn sequential_vacuumcleanup(
     }
 
     let opfamily = unsafe { opfamily(index_relation) };
-    let index = unsafe { PostgresRelation::new(index_relation) };
+    let index = unsafe { PostgresRelation::new(index_relation, 1) };
     let check = || unsafe {
         #[cfg(any(
             feature = "pg13",

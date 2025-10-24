@@ -225,7 +225,7 @@ unsafe fn aminsertinner(
     ctid: pgrx::pg_sys::ItemPointer,
 ) -> bool {
     let opfamily = unsafe { opfamily(index_relation) };
-    let index = unsafe { PostgresRelation::new(index_relation) };
+    let index = unsafe { PostgresRelation::new(index_relation, 1) };
     let datum = unsafe { (!is_null.add(0).read()).then_some(values.add(0).read()) };
     let ctid = unsafe { ctid.read() };
     if let Some(store) = unsafe { datum.and_then(|x| opfamily.store(x)) } {
@@ -253,7 +253,7 @@ pub unsafe extern "C-unwind" fn ambulkdelete(
         };
     }
     let opfamily = unsafe { opfamily((*info).index) };
-    let index = unsafe { PostgresRelation::new((*info).index) };
+    let index = unsafe { PostgresRelation::new((*info).index, 1) };
     let check = || unsafe {
         #[cfg(any(
             feature = "pg13",
@@ -291,7 +291,7 @@ pub unsafe extern "C-unwind" fn amvacuumcleanup(
         };
     }
     let opfamily = unsafe { opfamily((*info).index) };
-    let index = unsafe { PostgresRelation::new((*info).index) };
+    let index = unsafe { PostgresRelation::new((*info).index, 1) };
     let check = || unsafe {
         #[cfg(any(
             feature = "pg13",
@@ -353,7 +353,7 @@ pub unsafe extern "C-unwind" fn amrescan(
         scanner.scanning = LazyCell::new(Box::new(|| Box::new(std::iter::empty())));
         scanner.bump.reset();
         let opfamily = opfamily((*scan).indexRelation);
-        let index = PostgresRelation::new((*scan).indexRelation);
+        let index = PostgresRelation::new((*scan).indexRelation, 1);
         let options = SearchOptions {
             ef_search: gucs::vchordg_ef_search(),
             beam_search: gucs::vchordg_beam_search(),
@@ -408,7 +408,7 @@ pub unsafe extern "C-unwind" fn amrescan(
                 }
                 LazyCell::new(Box::new(move || {
                     // only do this since `PostgresRelation` has no destructor
-                    let index = bump.alloc(index.clone());
+                    let index = bump.alloc(index);
                     builder.build(index, options, fetcher, bump, recorder)
                 }))
             }
