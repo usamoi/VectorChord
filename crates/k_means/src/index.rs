@@ -110,8 +110,8 @@ pub fn update(
         }
 
         sum.par_iter_mut()
-            .enumerate()
-            .for_each(|(i, sum)| f32::vector_mul_scalar_inplace(sum, 1.0 / count[i]));
+            .zip(count.par_iter())
+            .for_each(|(sum, count)| f32::vector_mul_scalar_inplace(sum, 1.0 / count));
 
         *centroids = sum;
 
