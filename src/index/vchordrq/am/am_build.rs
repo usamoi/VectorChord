@@ -25,7 +25,7 @@ use crate::index::vchordrq::types::*;
 use index::relation::{
     Page, PageGuard, Relation, RelationRead, RelationReadTypes, RelationWrite, RelationWriteTypes,
 };
-use k_means::flat::k_means_lookup;
+use k_means::k_means_lookup;
 use k_means::square::Square;
 use simd::Floating;
 use std::ffi::CStr;
@@ -1302,7 +1302,7 @@ fn make_internal_build(
         );
     }
     let mut sample = sampler.sample();
-    let samples = 'a: {
+    let samples = 'samples: {
         let max_number_of_samples = internal_build
             .lists
             .last()
@@ -1310,7 +1310,7 @@ fn make_internal_build(
             .unwrap_or_default();
         let mut samples = Square::with_capacity(sample_dim, max_number_of_samples as _);
         if samples.len() >= max_number_of_samples as usize {
-            break 'a samples;
+            break 'samples samples;
         }
         while let Some(mut tuple) = sample.next() {
             let (values, is_nulls) = tuple.build();
@@ -1334,7 +1334,7 @@ fn make_internal_build(
                         }
                         samples.push_slice(x.as_slice());
                         if samples.len() >= max_number_of_samples as usize {
-                            break 'a samples;
+                            break 'samples samples;
                         }
                     }
                 }
@@ -1378,26 +1378,37 @@ fn make_internal_build(
                 "clustering: starting, clustering {num_points} vectors of {num_dims} dimension into {num_lists} clusters, in {num_iterations} iterations"
             );
         }
-        let mut f = {
+        let mut f = 'f: {
             let view = input.as_mut_view();
-            if result.last().is_none()
-                && let KMeansAlgorithm::Hierarchical {} = internal_build.kmeans_algorithm
-            {
-                k_means::hierarchical_k_means(
+            if result.last().is_some() {
+                break 'f k_means::lloyd_k_means(
                     &pool,
                     num_dims,
                     view,
                     num_lists,
                     [7; 32],
                     internal_build.spherical_centroids,
-                )
-            } else {
-                k_means::k_means(&pool, num_dims, view, num_lists, [7; 32])
+                );
+            };
+            match internal_build.kmeans_algorithm {
+                KMeansAlgorithm::Lloyd {} => k_means::lloyd_k_means(
+                    &pool,
+                    num_dims,
+                    view,
+                    num_lists,
+                    [7; 32],
+                    internal_build.spherical_centroids,
+                ),
+                KMeansAlgorithm::Hierarchical {} => k_means::hierarchical_k_means(
+                    &pool,
+                    num_dims,
+                    view,
+                    num_lists,
+                    [7; 32],
+                    internal_build.spherical_centroids,
+                ),
             }
         };
-        if internal_build.spherical_centroids {
-            f.sphericalize();
-        }
         for i in 0..num_iterations {
             pgrx::check_for_interrupts!();
             if result.is_empty() {
@@ -1413,47 +1424,49 @@ fn make_internal_build(
             }
             f.assign();
             f.update();
-            if internal_build.spherical_centroids {
-                f.sphericalize();
-            }
         }
-        let centroids = if reduction && result.last().is_none() {
-            let mut sample = sampler.sample();
-            let mut next_sample = || -> Option<(Vec<f32>, Vec<f32>)> {
-                let mut tuple = sample.next()?;
-                let (values, is_nulls) = tuple.build();
-                let datum = (!is_nulls[0]).then_some(values[0]);
-                if let Some(datum) = datum {
-                    let vectors = unsafe { opfamily.store(datum) };
-                    if let Some(vectors) = vectors {
-                        if let Some((vector, _)) = vectors.into_iter().next() {
-                            let x = match vector {
-                                OwnedVector::Vecf32(x) => VectOwned::normalize(x),
-                                OwnedVector::Vecf16(x) => VectOwned::normalize(x),
-                            };
-                            let mut y = rabitq::rotate::rotate(&x);
-                            y.truncate(sample_dim);
-                            return Some((x, y));
+        let centroids = 'centroids: {
+            if result.last().is_some() {
+                break 'centroids f.finish();
+            }
+            if reduction {
+                let mut sample = sampler.sample();
+                let mut next_sample = || -> Option<(Vec<f32>, Vec<f32>)> {
+                    let mut tuple = sample.next()?;
+                    let (values, is_nulls) = tuple.build();
+                    let datum = (!is_nulls[0]).then_some(values[0]);
+                    if let Some(datum) = datum {
+                        let vectors = unsafe { opfamily.store(datum) };
+                        if let Some(vectors) = vectors {
+                            if let Some((vector, _)) = vectors.into_iter().next() {
+                                let x = match vector {
+                                    OwnedVector::Vecf32(x) => VectOwned::normalize(x),
+                                    OwnedVector::Vecf16(x) => VectOwned::normalize(x),
+                                };
+                                let mut y = rabitq::rotate::rotate(&x);
+                                y.truncate(sample_dim);
+                                return Some((x, y));
+                            }
+                            None
+                        } else {
+                            None
                         }
-                        None
                     } else {
                         None
                     }
-                } else {
-                    None
-                }
-            };
-            k_means_dimension_restore(
-                vector_options.dims as usize,
-                num_lists,
-                num_points,
-                internal_build.spherical_centroids,
-                [7; 32],
-                f.index(),
-                &mut next_sample,
-            )
-        } else {
-            f.finish()
+                };
+                k_means_dimension_restore(
+                    vector_options.dims as usize,
+                    num_lists,
+                    num_points,
+                    internal_build.spherical_centroids,
+                    [7; 32],
+                    f.index(),
+                    &mut next_sample,
+                )
+            } else {
+                f.finish()
+            }
         };
 
         if result.is_empty() {
@@ -1491,13 +1504,13 @@ fn make_internal_build(
     result
 }
 
-fn k_means_dimension_restore<'a>(
+fn k_means_dimension_restore(
     d: usize,
     c: usize,
     num_points: usize,
     is_spherical: bool,
     seed: [u8; 32],
-    index: Box<dyn Fn(&[f32]) -> u32 + 'a>,
+    index: Box<dyn Fn(&[f32]) -> (f32, usize) + '_>,
     mut next_sample: impl FnMut() -> Option<(Vec<f32>, Vec<f32>)>,
 ) -> Square {
     use rand::rngs::StdRng;
@@ -1509,7 +1522,7 @@ fn k_means_dimension_restore<'a>(
     while let Some((original, reduction)) = next_sample()
         && traveled < num_points
     {
-        let cid = index(&reduction) as usize;
+        let (_, cid) = index(&reduction);
         f32::vector_add_inplace(&mut centroids[cid], &original);
         count[cid] += 1;
         traveled += 1;
