@@ -79,3 +79,26 @@ compile_error!("This crate must be compiled with `-Cpanic=unwind`.");
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[global_allocator]
 static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[pgrx::pg_extern(immutable, strict, parallel_safe)]
+fn x(
+    vector: datatype::memory_vector::VectorInput<'_>,
+    n: i32,
+) -> datatype::memory_vector::VectorOutput {
+    assert!(n > 0);
+    let slice = vector.as_borrowed().slice();
+    let dim = slice.len();
+    let expanded_dim = dim.saturating_mul(n as _);
+    assert!(expanded_dim <= 16000);
+    let mut expanded_slice = slice
+        .iter()
+        .flat_map(|&x| {
+            let mut buf = vec![0.0; n as _];
+            buf[0] = x;
+            buf
+        })
+        .collect::<Vec<_>>();
+    rabitq::rotate::rotate_inplace(&mut expanded_slice);
+    let expanded_vector = vector::vect::VectBorrowed::new(&expanded_slice);
+    datatype::memory_vector::VectorOutput::new(expanded_vector)
+}
