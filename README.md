@@ -139,7 +139,7 @@ You may choose either license based on your needs. We welcome any commercial col
 [docker-release-link]: https://hub.docker.com/r/tensorchord/vchord-postgres
 [docker-release-shield]: https://img.shields.io/docker/v/tensorchord/vchord-postgres?color=369eff&label=docker&labelColor=black&logo=docker&logoColor=white&style=flat
 [github-release-link]: https://github.com/tensorchord/VectorChord/releases
-[github-release-shield]: https://img.shields.io/github/v/release/tensorchord/VectorChord?color=369eff&labelColor=black&logo=github&style=flat
+[github-release-shield]: https://img.shields.io/github/v/release/tensorchord/VectorChord?color=369eff&labelColor=black&logo=github&style=flat?
 [ghcr-release-link]: https://github.com/orgs/tensorchord/packages/container/package/vchord-postgres
 <!-- GHCR badge is not supported by shields.io yet, use docker badge instead -->
 [ghcr-release-shield]: https://img.shields.io/docker/v/tensorchord/vchord-postgres?color=369eff&label=GHCR&labelColor=black&logo=github&logoColor=white&style=flat
