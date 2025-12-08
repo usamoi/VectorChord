@@ -22,8 +22,10 @@ jobs:
       - name: Set up Environment
         run: |
           curl -fsSL https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-$(uname -m).gz | gzip -d - | install -m 755 /dev/stdin /usr/local/bin/taplo
+          [ "$(uname -m)" = x86_64 ] && echo "dad2faf6377d2daa4f4fabf459fe7ccfb98a5448f0d4bca8270ca9acb0409bfe  /usr/local/bin/taplo" | sha256sum -c
 
           curl -fsSL https://github.com/EmbarkStudios/cargo-deny/releases/download/0.18.2/cargo-deny-0.18.2-$(uname -m)-unknown-linux-musl.tar.gz | tar -xOzf - cargo-deny-0.18.2-$(uname -m)-unknown-linux-musl/cargo-deny | install -m 755 /dev/stdin /usr/local/bin/cargo-deny
+          [ "$(uname -m)" = x86_64 ] && echo "4f674f1593c4783667380fddb1a6592ed30940418506c7664d74c5cadc742e7b  /usr/local/bin/cargo-deny" | sha256sum -c
 
       - name: Install Rust
         run: rustup update
@@ -36,9 +38,6 @@ jobs:
 
       - name: Taplo
         run: taplo fmt --check
-
-      - name: Ruff
-        uses: astral-sh/ruff-action@v1
 
       - name: Rustfmt
         run: cargo fmt --check -- --config-path /dev/null --config imports_granularity=Module
@@ -231,6 +230,8 @@ jobs:
           sudo apt-get update
 
           curl -fsSL https://github.com/risinglightdb/sqllogictest-rs/releases/download/v0.28.4/sqllogictest-bin-v0.28.4-$(uname -m)-unknown-linux-musl.tar.gz | tar -xOzf - ./sqllogictest | install -m 755 /dev/stdin /usr/local/bin/sqllogictest
+          [ "$(uname -m)" = x86_64 ] && echo "51d56311c64ea5a2fb81ca52b82af1d4e225eb27c5e2d9e4a61323a831724c26  /usr/local/bin/sqllogictest" | sha256sum -c
+          [ "$(uname -m)" = aarch64 ] && echo "8d3839a3538071d461cc0d0d4075ee682455b5378e5310ecff0ed556bff5e910  /usr/local/bin/sqllogictest" | sha256sum -c
 
       - name: Install Rust
         run: rustup update
@@ -343,6 +344,8 @@ jobs:
           brew update
 
           curl -fsSL https://github.com/risinglightdb/sqllogictest-rs/releases/download/v0.28.4/sqllogictest-bin-v0.28.4-${{ matrix.arch }}-apple-darwin.tar.gz | tar -xOzf - ./sqllogictest | tee /usr/local/bin/sqllogictest > /dev/null && chmod 755 /usr/local/bin/sqllogictest
+          [ "$(uname -m)" = x86_64 ] && echo "51d56311c64ea5a2fb81ca52b82af1d4e225eb27c5e2d9e4a61323a831724c26  /usr/local/bin/sqllogictest" | sha256sum -c
+          [ "$(uname -m)" = aarch64 ] && echo "8d3839a3538071d461cc0d0d4075ee682455b5378e5310ecff0ed556bff5e910  /usr/local/bin/sqllogictest" | sha256sum -c
 
       - name: Install Rust
         run: rustup update
@@ -568,6 +571,8 @@ jobs:
           ln -s /usr/bin/node /opt/bin/node
 
           curl -fsSL https://github.com/risinglightdb/sqllogictest-rs/releases/download/v0.28.4/sqllogictest-bin-v0.28.4-$(uname -m)-unknown-linux-musl.tar.gz | tar -xOzf - ./sqllogictest | install -m 755 /dev/stdin /usr/local/bin/sqllogictest
+          [ "$(uname -m)" = x86_64 ] && echo "51d56311c64ea5a2fb81ca52b82af1d4e225eb27c5e2d9e4a61323a831724c26  /usr/local/bin/sqllogictest" | sha256sum -c
+          [ "$(uname -m)" = aarch64 ] && echo "8d3839a3538071d461cc0d0d4075ee682455b5378e5310ecff0ed556bff5e910  /usr/local/bin/sqllogictest" | sha256sum -c
 
       - name: Install Rust
         run: |
@@ -767,6 +772,7 @@ jobs:
           echo QEMU_CPU=$QEMU_CPU >> $GITHUB_ENV
 
           curl -fsSL https://github.com/risinglightdb/sqllogictest-rs/releases/download/v0.28.4/sqllogictest-bin-v0.28.4-$(uname -m)-unknown-linux-musl.tar.gz | tar -xOzf - ./sqllogictest | install -m 755 /dev/stdin /usr/local/bin/sqllogictest
+          [ "$(uname -m)" = x86_64 ] && echo "51d56311c64ea5a2fb81ca52b82af1d4e225eb27c5e2d9e4a61323a831724c26  /usr/local/bin/sqllogictest" | sha256sum -c
 
       - name: Install Rust
         run: |
@@ -924,6 +930,7 @@ jobs:
           sudo pacman -S --noconfirm liburing numactl python valgrind
 
           curl -fsSL https://github.com/risinglightdb/sqllogictest-rs/releases/download/v0.28.4/sqllogictest-bin-v0.28.4-$(uname -m)-unknown-linux-musl.tar.gz | tar -xOzf - ./sqllogictest | sudo install -m 755 /dev/stdin /usr/local/bin/sqllogictest
+          [ "$(uname -m)" = x86_64 ] && echo "51d56311c64ea5a2fb81ca52b82af1d4e225eb27c5e2d9e4a61323a831724c26  /usr/local/bin/sqllogictest" | sha256sum -c
 
       - name: Install Rust
         run: |
