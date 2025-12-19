@@ -20,6 +20,7 @@ use index::relation::{
     RelationReadStream, RelationReadStreamTypes, RelationReadTypes, RelationWrite,
     RelationWriteTypes,
 };
+use pgrx::pg_sys::PageHeaderData;
 use std::collections::VecDeque;
 use std::iter::{Chain, Flatten};
 use std::marker::PhantomData;
@@ -30,28 +31,18 @@ use std::ptr::NonNull;
 #[repr(C, align(8))]
 #[derive(Debug)]
 pub struct PostgresPage<O> {
-    header: pgrx::pg_sys::PageHeaderData,
-    content: [u8; pgrx::pg_sys::BLCKSZ as usize - size_of::<pgrx::pg_sys::PageHeaderData>()],
+    header: PageHeaderData,
+    content: [u8; pgrx::pg_sys::BLCKSZ as usize - size_of::<PageHeaderData>()],
     _opaque: PhantomData<fn(O) -> O>,
 }
 
-// It is a non-guaranteed detection.
-// If `PageHeaderData` contains padding bytes, const-eval probably fails.
 const _: () = {
-    use pgrx::pg_sys::PageHeaderData as T;
-    use std::mem::{transmute, zeroed};
-    const _ZERO: &[u8; size_of::<T>()] = unsafe { transmute(&zeroed::<T>()) };
+    use pgrx::pg_sys::{BLCKSZ, MAXIMUM_ALIGNOF, PageHeaderData};
+    assert!(size_of::<PageHeaderData>() == offset_of!(PageHeaderData, pd_linp));
+    assert!(size_of::<PageHeaderData>() % MAXIMUM_ALIGNOF as usize == 0);
+    assert!(align_of::<PostgresPage<()>>() == MAXIMUM_ALIGNOF as usize);
+    assert!(size_of::<PostgresPage<()>>() == BLCKSZ as usize);
 };
-
-// Layout checks of header.
-const _: () = {
-    use pgrx::pg_sys::{MAXIMUM_ALIGNOF, PageHeaderData as T};
-    assert!(size_of::<T>() == offset_of!(T, pd_linp));
-    assert!(size_of::<T>() % MAXIMUM_ALIGNOF as usize == 0);
-};
-
-const _: () = assert!(align_of::<PostgresPage<()>>() == pgrx::pg_sys::MAXIMUM_ALIGNOF as usize);
-const _: () = assert!(size_of::<PostgresPage<()>>() == pgrx::pg_sys::BLCKSZ as usize);
 
 impl<O: Opaque> PostgresPage<O> {
     pub fn clone_into_boxed(&self) -> Box<Self> {
@@ -66,12 +57,14 @@ impl<O: Opaque> PostgresPage<O> {
 impl<O: Opaque> Page for PostgresPage<O> {
     type Opaque = O;
     fn get_opaque(&self) -> &O {
-        assert!(self.header.pd_special as usize + size_of::<O>() == size_of::<Self>());
-        unsafe { &*((self as *const _ as *const O).byte_add(self.header.pd_special as _)) }
+        assert!(self.header.pd_special as usize == size_of::<Self>() - size_of::<O>());
+        let offset = self.header.pd_special as usize - size_of::<PageHeaderData>();
+        unsafe { &*self.content.as_ptr().add(offset).cast::<O>() }
     }
     fn get_opaque_mut(&mut self) -> &mut O {
-        assert!(self.header.pd_special as usize + size_of::<O>() == size_of::<Self>());
-        unsafe { &mut *((self as *mut _ as *mut O).byte_add(self.header.pd_special as _)) }
+        assert!(self.header.pd_special as usize == size_of::<Self>() - size_of::<O>());
+        let offset = self.header.pd_special as usize - size_of::<PageHeaderData>();
+        unsafe { &mut *self.content.as_mut_ptr().add(offset).cast::<O>() }
     }
     fn len(&self) -> u16 {
         use pgrx::pg_sys::{ItemIdData, PageHeaderData};
@@ -79,8 +72,8 @@ impl<O: Opaque> Page for PostgresPage<O> {
         assert!(self.header.pd_upper as usize <= size_of::<Self>());
         let lower = self.header.pd_lower as usize;
         let upper = self.header.pd_upper as usize;
-        assert!(offset_of!(PageHeaderData, pd_linp) <= lower && lower <= upper);
-        ((lower - offset_of!(PageHeaderData, pd_linp)) / size_of::<ItemIdData>()) as u16
+        assert!(size_of::<PageHeaderData>() <= lower && lower <= upper);
+        ((lower - size_of::<PageHeaderData>()) / size_of::<ItemIdData>()) as u16
     }
     fn get(&self, i: u16) -> Option<&[u8]> {
         use pgrx::pg_sys::{ItemIdData, PageHeaderData};
@@ -89,27 +82,29 @@ impl<O: Opaque> Page for PostgresPage<O> {
         }
         assert!(self.header.pd_lower as usize <= size_of::<Self>());
         let lower = self.header.pd_lower as usize;
-        assert!(offset_of!(PageHeaderData, pd_linp) <= lower);
-        let n = ((lower - offset_of!(PageHeaderData, pd_linp)) / size_of::<ItemIdData>()) as u16;
+        assert!(size_of::<PageHeaderData>() <= lower);
+        let n = ((lower - size_of::<PageHeaderData>()) / size_of::<ItemIdData>()) as u16;
         if i > n {
             return None;
         }
-        let iid = unsafe { self.header.pd_linp.as_ptr().add((i - 1) as _).read() };
-        let lp_off = iid.lp_off() as usize;
-        let lp_len = iid.lp_len() as usize;
-        match lp_flags(iid) {
+        let pd_linp = self.content.as_ptr().cast::<ItemIdData>();
+        let lp = unsafe { pd_linp.add((i - 1) as _).read() };
+        let lp_off = lp_off(lp) as usize;
+        match lp_flags(lp) {
             pgrx::pg_sys::LP_UNUSED => return None,
             pgrx::pg_sys::LP_NORMAL => (),
             pgrx::pg_sys::LP_REDIRECT => unimplemented!(),
             pgrx::pg_sys::LP_DEAD => unimplemented!(),
             _ => unreachable!(),
         }
-        assert!(offset_of!(PageHeaderData, pd_linp) <= lp_off);
+        let lp_len = lp_len(lp) as usize;
+        assert!(size_of::<PageHeaderData>() <= lp_off);
         assert!(lp_off <= size_of::<Self>());
         assert!(lp_len <= size_of::<Self>());
         assert!(lp_off + lp_len <= size_of::<Self>());
+        let offset = lp_off - size_of::<PageHeaderData>();
         unsafe {
-            let ptr = (self as *const Self).cast::<u8>().add(lp_off as _);
+            let ptr = self.content.as_ptr().add(offset);
             Some(std::slice::from_raw_parts(ptr, lp_len as _))
         }
     }
@@ -120,27 +115,29 @@ impl<O: Opaque> Page for PostgresPage<O> {
         }
         assert!(self.header.pd_lower as usize <= size_of::<Self>());
         let lower = self.header.pd_lower as usize;
-        assert!(offset_of!(PageHeaderData, pd_linp) <= lower);
-        let n = ((lower - offset_of!(PageHeaderData, pd_linp)) / size_of::<ItemIdData>()) as u16;
+        assert!(size_of::<PageHeaderData>() <= lower);
+        let n = ((lower - size_of::<PageHeaderData>()) / size_of::<ItemIdData>()) as u16;
         if i > n {
             return None;
         }
-        let iid = unsafe { self.header.pd_linp.as_ptr().add((i - 1) as _).read() };
-        let lp_off = iid.lp_off() as usize;
-        let lp_len = iid.lp_len() as usize;
-        match lp_flags(iid) {
+        let pd_linp = self.content.as_ptr().cast::<ItemIdData>();
+        let lp = unsafe { pd_linp.add((i - 1) as _).read() };
+        let lp_off = lp_off(lp) as usize;
+        match lp_flags(lp) {
             pgrx::pg_sys::LP_UNUSED => return None,
             pgrx::pg_sys::LP_NORMAL => (),
             pgrx::pg_sys::LP_REDIRECT => unimplemented!(),
             pgrx::pg_sys::LP_DEAD => unimplemented!(),
             _ => unreachable!(),
         }
-        assert!(offset_of!(PageHeaderData, pd_linp) <= lp_off);
+        let lp_len = lp_len(lp) as usize;
+        assert!(size_of::<PageHeaderData>() <= lp_off);
         assert!(lp_off <= size_of::<Self>());
         assert!(lp_len <= size_of::<Self>());
         assert!(lp_off + lp_len <= size_of::<Self>());
+        let offset = lp_off - size_of::<PageHeaderData>();
         unsafe {
-            let ptr = (self as *mut Self).cast::<u8>().add(lp_off as _);
+            let ptr = self.content.as_mut_ptr().add(offset);
             Some(std::slice::from_raw_parts_mut(ptr, lp_len as _))
         }
     }
@@ -173,14 +170,15 @@ impl<O: Opaque> Page for PostgresPage<O> {
 
 unsafe fn page_init<O: Opaque>(this: *mut PostgresPage<O>, opaque: O) {
     unsafe {
-        use pgrx::pg_sys::{BLCKSZ, PageHeaderData, PageInit};
+        use pgrx::pg_sys::{BLCKSZ, PageInit};
         PageInit(this.cast(), BLCKSZ as usize, size_of::<O>());
-        assert_eq!(
-            (*this.cast::<PageHeaderData>()).pd_special as usize + size_of::<O>(),
-            size_of::<PostgresPage<O>>()
-        );
-        this.cast::<O>()
-            .byte_add(size_of::<PostgresPage<O>>() - size_of::<O>())
+        let this = &mut *this;
+        assert!(this.header.pd_special as usize == size_of::<PostgresPage<O>>() - size_of::<O>());
+        let offset = this.header.pd_special as usize - size_of::<PageHeaderData>();
+        this.content
+            .as_mut_ptr()
+            .add(offset)
+            .cast::<O>()
             .write(opaque);
     }
 }
@@ -703,9 +701,42 @@ impl<O: Opaque> RelationReadStream for PostgresRelation<O> {
 }
 
 #[inline(always)]
+fn lp_off(x: pgrx::pg_sys::ItemIdData) -> u32 {
+    let x: u32 = unsafe { std::mem::transmute(x) };
+    #[cfg(target_endian = "little")]
+    {
+        (x >> 0) & ((1 << 15) - 1)
+    }
+    #[cfg(target_endian = "big")]
+    {
+        (x >> 17) & ((1 << 15) - 1)
+    }
+}
+
+#[inline(always)]
 fn lp_flags(x: pgrx::pg_sys::ItemIdData) -> u32 {
     let x: u32 = unsafe { std::mem::transmute(x) };
-    (x >> 15) & 0b11
+    #[cfg(target_endian = "little")]
+    {
+        (x >> 15) & ((1 << 2) - 1)
+    }
+    #[cfg(target_endian = "big")]
+    {
+        (x >> 15) & ((1 << 2) - 1)
+    }
+}
+
+#[inline(always)]
+fn lp_len(x: pgrx::pg_sys::ItemIdData) -> u32 {
+    let x: u32 = unsafe { std::mem::transmute(x) };
+    #[cfg(target_endian = "little")]
+    {
+        (x >> 17) & ((1 << 15) - 1)
+    }
+    #[cfg(target_endian = "big")]
+    {
+        (x >> 0) & ((1 << 15) - 1)
+    }
 }
 
 // Emulate unstable library feature `vec_deque_pop_if`.

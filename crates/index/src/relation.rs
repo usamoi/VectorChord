@@ -14,13 +14,17 @@
 
 use crate::fetch::Fetch;
 use std::ops::{Deref, DerefMut};
-use zerocopy::{FromBytes, IntoBytes};
+use zerocopy::{FromBytes, FromZeros, IntoBytes};
 
 /// # Safety
 ///
 /// * `Opaque` must aligned to 8 bytes.
+/// * `Opaque` must not be too large.
 #[allow(unsafe_code)]
-pub unsafe trait Opaque: Copy + Send + Sync + FromBytes + IntoBytes + 'static {}
+pub unsafe trait Opaque:
+    Copy + Send + Sync + FromZeros + FromBytes + IntoBytes + 'static
+{
+}
 
 pub trait Page: Sized + 'static {
     type Opaque: Opaque;
