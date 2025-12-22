@@ -81,7 +81,7 @@ impl Default for VchordgIndexOptions {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OwnedVector {
     Vecf32(VectOwned<f32>),
     Vecf16(VectOwned<f16>),
@@ -98,14 +98,14 @@ pub enum BorrowedVector<'a> {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum DistanceKind {
     L2S,
     Dot,
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum VectorKind {
     Vecf32,
     Vecf16,
@@ -113,7 +113,7 @@ pub enum VectorKind {
     Rabitq4,
 }
 
-#[derive(Debug, Clone, Validate)]
+#[derive(Debug, Clone, Validate, Serialize, Deserialize)]
 #[validate(schema(function = "Self::validate_self"))]
 pub struct VectorOptions {
     #[validate(range(min = 1))]

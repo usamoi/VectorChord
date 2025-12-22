@@ -18,7 +18,10 @@ use crate::index::traverse::{HeapTraverser, Traverser};
 use crate::index::vchordg::am::{Reloption, ctid_to_key, kv_to_pointer};
 use crate::index::vchordg::opclass::opfamily;
 use crate::index::vchordg::types::VchordgIndexingOptions;
+use byteorder::{LE, ReadBytesExt};
+use server::api::ServerPacket;
 use std::ffi::CStr;
+use std::io::{BufReader, BufWriter, Read};
 use std::marker::PhantomData;
 use vchordg::types::*;
 
@@ -138,6 +141,93 @@ pub unsafe extern "C-unwind" fn ambuild(
     let reporter = PostgresReporter {
         _phantom: PhantomData,
     };
+    if let Some(socket_addr) = vchordg_options.socket_addr {
+        use server::api::ClientPacket;
+        use std::io::Write;
+        let opfamily = unsafe { opfamily(index_relation) };
+        let traverser = unsafe {
+            HeapTraverser::new(
+                heap_relation,
+                index_relation,
+                index_info,
+                std::ptr::null_mut(),
+            )
+        };
+        let connection = std::net::TcpStream::connect(socket_addr).unwrap();
+        {
+            let mut writer = BufWriter::new(&connection);
+            {
+                let msg = serde_json::to_string(&ClientPacket::Build {
+                    vector_options,
+                    index_options: vchordg_options.index,
+                })
+                .unwrap();
+                writer.write_all(&msg.len().to_le_bytes()).unwrap();
+                writer.write_all(msg.as_bytes()).unwrap();
+            }
+            let mut indtuples = 0_u64;
+            traverser.traverse(true, |tuple: &mut dyn crate::index::traverse::Tuple| {
+                let ctid = tuple.id();
+                let (values, is_nulls) = tuple.build();
+                let value = unsafe { (!is_nulls.add(0).read()).then_some(values.add(0).read()) };
+                let store = value
+                    .and_then(|x| unsafe { opfamily.store(x) })
+                    .unwrap_or_default();
+                for (vector, extra) in store {
+                    let key = ctid_to_key(ctid);
+                    let payload = kv_to_pointer((key, extra));
+                    let msg =
+                        serde_json::to_string(&ClientPacket::Insert { vector, payload }).unwrap();
+                    writer.write_all(&msg.len().to_le_bytes()).unwrap();
+                    writer.write_all(msg.as_bytes()).unwrap();
+                }
+                indtuples += 1;
+                reporter.tuples_done(indtuples);
+            });
+            {
+                let msg = serde_json::to_string(&ClientPacket::Finish {}).unwrap();
+                writer.write_all(&msg.len().to_le_bytes()).unwrap();
+                writer.write_all(msg.as_bytes()).unwrap();
+            }
+        }
+        {
+            let mut reader = BufReader::new(&connection);
+            let mut buf = Vec::<u8>::new();
+            loop {
+                let length = reader.read_u64::<LE>().unwrap();
+                buf.resize(length as _, 0);
+                reader.read_exact(buf.as_mut_slice()).unwrap();
+                let packet: ServerPacket = serde_json::from_slice(&buf).unwrap();
+                match packet {
+                    ServerPacket::Error { reason } => panic!("{reason}"),
+                    ServerPacket::Flush {
+                        id,
+                        pd_lower,
+                        pd_upper,
+                        pd_special,
+                        content,
+                    } => {
+                        use index::relation::PageGuard;
+                        use index::relation::RelationWrite;
+                        let mut guard = index.extend(
+                            vchordg::Opaque {
+                                next: u32::MAX,
+                                link: u32::MAX,
+                            },
+                            false,
+                        );
+                        assert_eq!(guard.id(), id);
+                        guard.header.pd_lower = pd_lower;
+                        guard.header.pd_upper = pd_upper;
+                        guard.header.pd_special = pd_special;
+                        guard.content.copy_from_slice(&content);
+                    }
+                    ServerPacket::Finish {} => break,
+                }
+            }
+        }
+        return unsafe { pgrx::pgbox::PgBox::<pgrx::pg_sys::IndexBuildResult>::alloc0().into_pg() };
+    }
     crate::index::vchordg::dispatch::build(vector_options, vchordg_options.index, &index);
     reporter.phase(BuildPhase::from_code(BuildPhaseCode::Inserting));
     let cached = vchordg_cached::VchordgCached::_0 {}.serialize();

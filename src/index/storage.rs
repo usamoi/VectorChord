@@ -31,8 +31,8 @@ use std::ptr::NonNull;
 #[repr(C, align(8))]
 #[derive(Debug)]
 pub struct PostgresPage<O> {
-    header: PageHeaderData,
-    content: [u8; pgrx::pg_sys::BLCKSZ as usize - size_of::<PageHeaderData>()],
+    pub header: PageHeaderData,
+    pub content: [u8; pgrx::pg_sys::BLCKSZ as usize - size_of::<PageHeaderData>()],
     _opaque: PhantomData<fn(O) -> O>,
 }
 

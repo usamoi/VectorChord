@@ -22,4 +22,5 @@ pub struct VchordgIndexingOptions {
     #[serde(flatten)]
     #[validate(nested)]
     pub index: VchordgIndexOptions,
+    pub socket_addr: Option<String>,
 }

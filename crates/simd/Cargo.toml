@@ -11,7 +11,7 @@ nightly_f16 = ["zerocopy/float-nightly"]
 [dependencies]
 simd_macros = { path = "../simd_macros" }
 
-half = { version = "2.7.1", features = ["zerocopy"] }
+half = { version = "2.7.1", features = ["serde", "zerocopy"] }
 seq-macro.workspace = true
 zerocopy.workspace = true
 

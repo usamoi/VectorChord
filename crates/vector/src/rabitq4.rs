@@ -14,8 +14,9 @@
 
 use crate::{VectorBorrowed, VectorOwned};
 use distance::Distance;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rabitq4Owned {
     dim: u32,
     sum_of_x2: f32,

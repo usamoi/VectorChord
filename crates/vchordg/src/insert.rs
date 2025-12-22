@@ -313,6 +313,7 @@ fn append_vertex_tuple<'b, R: RelationRead + RelationWrite>(
 where
     R::Page: Page<Opaque = Opaque>,
 {
+    assert!(first != 0);
     assert!(first != u32::MAX);
     let mut current = first;
     loop {
@@ -362,6 +363,7 @@ fn append_vector_tuple<'b, R: RelationRead + RelationWrite>(
 where
     R::Page: Page<Opaque = Opaque>,
 {
+    assert!(first != 0);
     assert!(first != u32::MAX);
     let mut current = first;
     loop {

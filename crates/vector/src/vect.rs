@@ -16,8 +16,9 @@ use crate::{VectorBorrowed, VectorOwned};
 use distance::Distance;
 use simd::Floating;
 use std::cmp::Ordering;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct VectOwned<S>(Vec<S>);
 
