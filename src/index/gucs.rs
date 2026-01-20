@@ -13,6 +13,7 @@
 // Copyright (c) 2025 TensorChord Inc.
 
 use crate::index::scanners::Io;
+use crate::index::vchordrq::SearchProbes;
 use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting, PostgresGucEnum};
 use std::ffi::CString;
 
@@ -299,30 +300,81 @@ pub fn vchordrq_enable_scan() -> bool {
     VCHORDRQ_ENABLE_SCAN.get()
 }
 
-pub fn vchordrq_probes() -> Vec<u32> {
+pub fn vchordrq_probes() -> SearchProbes {
     match VCHORDRQ_PROBES.get() {
-        None => Vec::new(),
+        None => SearchProbes::Lazy(Vec::new()),
         Some(probes) => {
-            let mut result = Vec::new();
-            let mut current = None;
-            for &c in probes.to_bytes() {
-                match c {
-                    b' ' => continue,
-                    b',' => result.push(current.take().expect("empty probes")),
-                    b'0'..=b'9' => {
-                        if let Some(x) = current.as_mut() {
-                            *x = *x * 10 + (c - b'0') as u32;
-                        } else {
-                            current = Some((c - b'0') as u32);
+            fn lazy(parameters: &[u8]) -> Vec<u32> {
+                let mut result = Vec::new();
+                let mut current = None;
+                for &c in parameters {
+                    match c {
+                        b' ' => continue,
+                        b',' => result.push(current.take().expect("empty probes")),
+                        b'0'..=b'9' => {
+                            if let Some(x) = current.as_mut() {
+                                *x = *x * 10 + (c - b'0') as u32;
+                            } else {
+                                current = Some((c - b'0') as u32);
+                            }
+                        }
+                        c if c.is_ascii_graphic() => {
+                            pgrx::error!("unknown character in probes: {:?}", char::from(c))
+                        }
+                        c if c.is_ascii() => {
+                            pgrx::error!("unknown character in probes: ASCII = {c}")
+                        }
+                        _ => pgrx::error!("unknown character"),
+                    }
+                }
+                if let Some(current) = current {
+                    result.push(current);
+                }
+                result
+            }
+            fn eager(parameters: &[u8]) -> (Vec<u32>, Vec<f32>, u32, f32) {
+                let mut result_a = Vec::<u32>::new();
+                let mut result_b = Vec::<f32>::new();
+                for p in parameters.split(|&c| c == b',') {
+                    let mut s = arrayvec::ArrayVec::<u8, 64>::new();
+                    for &c in p {
+                        match c {
+                            b' ' => continue,
+                            b'.' | b'0'..=b'9' => s.push(c),
+                            c if c.is_ascii_graphic() => {
+                                pgrx::error!("unknown character in probes: {:?}", char::from(c))
+                            }
+                            c if c.is_ascii() => {
+                                pgrx::error!("unknown character in probes: ASCII = {c}")
+                            }
+                            _ => pgrx::error!("unknown character"),
                         }
                     }
-                    c => pgrx::error!("unknown character in probes: ASCII = {c}"),
+                    let s = unsafe { str::from_utf8_unchecked(&s) };
+                    if result_a.len() == result_b.len() {
+                        result_a.push(s.parse().expect("bad integer"));
+                    } else {
+                        result_b.push(s.parse().expect("bad floating number"));
+                    }
                 }
+                let target_number = result_a.pop().expect("too less parameters");
+                let target_recall = result_b.pop().expect("too less parameters");
+                if result_a.len() != result_b.len() {
+                    pgrx::error!("inconsistent parameters");
+                }
+                (result_a, result_b, target_number, target_recall)
             }
-            if let Some(current) = current {
-                result.push(current);
+            let probes = probes.to_bytes();
+            if let Some(parameters) = probes.strip_prefix(b"lazy:") {
+                return SearchProbes::Lazy(lazy(parameters));
             }
-            result
+            if let Some(parameters) = probes.strip_prefix(b"eager:") {
+                return SearchProbes::Eager(eager(parameters));
+            }
+            if !probes.contains(&b':') {
+                return SearchProbes::Lazy(lazy(&probes));
+            }
+            pgrx::error!("unknown probing strategy")
         }
     }
 }

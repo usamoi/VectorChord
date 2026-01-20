@@ -14,6 +14,7 @@ vector = { path = "../vector" }
 
 pin-project = "1.1.10"
 serde.workspace = true
+statrs = "0.18.0"
 validator.workspace = true
 zerocopy.workspace = true
 

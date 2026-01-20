@@ -47,6 +47,8 @@ pub struct Reranker<T, F, P, W> {
     prefetcher: P,
     cache: BinaryHeap<Result>,
     f: F,
+    pub termination: Distance,
+    pub killed: bool,
     _phantom: PhantomData<fn(T, W) -> (T, W)>,
 }
 
@@ -59,10 +61,14 @@ where
     type Item = (Distance, NonZero<u64>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(((_, AlwaysEqual(mut w)), prefetch)) = self
+        while !self.killed && let Some((((Reverse(lowerbound), _), AlwaysEqual(mut w)), prefetch)) = self
             .prefetcher
             .next_if(|((d, _), ..)| Some(*d) > self.cache.peek().map(|(d, ..)| *d))
         {
+            if self.termination < lowerbound {
+                self.killed = true;
+                break;
+            }
             let &mut (payload, head, ..) = w.get_mut();
             if let Some(distance) = (self.f)(payload, prefetch, head) {
                 self.cache.push((Reverse(distance), AlwaysEqual(payload)));
@@ -104,6 +110,8 @@ pub fn rerank_index<
                 ),
             )
         }),
+        termination: Distance::INFINITY,
+        killed: false,
         _phantom: PhantomData,
     }
 }
@@ -132,6 +140,8 @@ pub fn rerank_heap<
             let distance = accessor.finish(unpack.1, vector.1);
             Some(distance)
         }),
+        termination: Distance::INFINITY,
+        killed: false,
         _phantom: PhantomData,
     }
 }

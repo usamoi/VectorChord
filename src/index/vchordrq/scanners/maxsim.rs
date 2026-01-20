@@ -17,7 +17,7 @@ use crate::index::scanners::{Io, SearchBuilder};
 use crate::index::vchordrq::dispatch::*;
 use crate::index::vchordrq::filter::filter;
 use crate::index::vchordrq::opclass::Opfamily;
-use crate::index::vchordrq::scanners::SearchOptions;
+use crate::index::vchordrq::scanners::{SearchOptions, SearchProbes};
 use crate::recorder::Recorder;
 use always_equal::AlwaysEqual;
 use dary_heap::QuaternaryHeap as Heap;
@@ -86,6 +86,9 @@ impl SearchBuilder for MaxsimBuilder {
         R: RelationRead + RelationPrefetch + RelationReadStream,
         R::Page: Page<Opaque = vchordrq::Opaque>,
     {
+        let SearchProbes::Lazy(probes) = options.probes else {
+            unreachable!();
+        };
         let mut vectors = None;
         for orderby_vectors in self.orderbys.into_iter().flatten() {
             if vectors.is_none() {
@@ -146,7 +149,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Plain => maxsim_search::<_, Op>(
                             index,
                             projected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -156,7 +159,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Simple => maxsim_search::<_, Op>(
                             index,
                             projected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -166,7 +169,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Stream => maxsim_search::<_, Op>(
                             index,
                             projected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -290,7 +293,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Plain => maxsim_search::<_, Op>(
                             index,
                             projected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -300,7 +303,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Simple => maxsim_search::<_, Op>(
                             index,
                             projected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -310,7 +313,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Stream => maxsim_search::<_, Op>(
                             index,
                             projected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -430,7 +433,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Plain => maxsim_search::<_, Op>(
                             index,
                             unprojected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -440,7 +443,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Simple => maxsim_search::<_, Op>(
                             index,
                             unprojected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -450,7 +453,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Stream => maxsim_search::<_, Op>(
                             index,
                             unprojected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -570,7 +573,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Plain => maxsim_search::<_, Op>(
                             index,
                             unprojected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -580,7 +583,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Simple => maxsim_search::<_, Op>(
                             index,
                             unprojected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,
@@ -590,7 +593,7 @@ impl SearchBuilder for MaxsimBuilder {
                         Io::Stream => maxsim_search::<_, Op>(
                             index,
                             unprojected[i].as_borrowed(),
-                            options.probes.clone(),
+                            probes.clone(),
                             options.epsilon,
                             maxsim_threshold,
                             bump,

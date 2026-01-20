@@ -223,7 +223,14 @@ pub unsafe extern "C-unwind" fn amcostestimate(
                 return;
             }
             let index = PostgresRelation::<vchordrq::Opaque>::new(relation.raw());
-            let probes = gucs::vchordrq_probes();
+            let SearchProbes::Lazy(probes) = gucs::vchordrq_probes() else {
+                *index_startup_cost = 0.0;
+                *index_total_cost = 0.0;
+                *index_selectivity = 1.0;
+                *index_correlation = 0.0;
+                *index_pages = 1.0;
+                return;
+            };
             let cost = vchordrq::cost(&index);
             if cost.cells.len() != 1 + probes.len() {
                 panic!(
@@ -463,8 +470,30 @@ pub unsafe extern "C-unwind" fn amrescan(
             | Opfamily::Rabitq8Cosine
             | Opfamily::Rabitq4L2
             | Opfamily::Rabitq4Ip
-            | Opfamily::Rabitq4Cosine => {
+            | Opfamily::Rabitq4Cosine
+                if matches!(options.probes, SearchProbes::Lazy(_)) =>
+            {
                 let mut builder = DefaultBuilder::new(opfamily);
+                for i in 0..(*scan).numberOfOrderBys {
+                    let data = (*scan).orderByData.add(i as usize);
+                    let value = (*data).sk_argument;
+                    let is_null = ((*data).sk_flags & pgrx::pg_sys::SK_ISNULL as i32) != 0;
+                    builder.add((*data).sk_strategy, (!is_null).then_some(value));
+                }
+                for i in 0..(*scan).numberOfKeys {
+                    let data = (*scan).keyData.add(i as usize);
+                    let value = (*data).sk_argument;
+                    let is_null = ((*data).sk_flags & pgrx::pg_sys::SK_ISNULL as i32) != 0;
+                    builder.add((*data).sk_strategy, (!is_null).then_some(value));
+                }
+                LazyCell::new(Box::new(move || {
+                    // only do this since `PostgresRelation` has no destructor
+                    let index = bump.alloc(index.clone());
+                    builder.build(index, options, fetcher, bump, recorder)
+                }))
+            }
+            Opfamily::VectorL2 if matches!(options.probes, SearchProbes::Eager(..)) => {
+                let mut builder = EagerDefaultBuilder::new(opfamily);
                 for i in 0..(*scan).numberOfOrderBys {
                     let data = (*scan).orderByData.add(i as usize);
                     let value = (*data).sk_argument;
@@ -486,7 +515,9 @@ pub unsafe extern "C-unwind" fn amrescan(
             Opfamily::VectorMaxsim
             | Opfamily::HalfvecMaxsim
             | Opfamily::Rabitq8Maxsim
-            | Opfamily::Rabitq4Maxsim => {
+            | Opfamily::Rabitq4Maxsim
+                if matches!(options.probes, SearchProbes::Lazy(_)) =>
+            {
                 let mut builder = MaxsimBuilder::new(opfamily);
                 for i in 0..(*scan).numberOfOrderBys {
                     let data = (*scan).orderByData.add(i as usize);
@@ -506,6 +537,7 @@ pub unsafe extern "C-unwind" fn amrescan(
                     builder.build(index, options, fetcher, bump, recorder)
                 }))
             }
+            _ => todo!(),
         };
     }
 }

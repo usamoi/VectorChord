@@ -13,21 +13,29 @@
 // Copyright (c) 2025 TensorChord Inc.
 
 mod default;
+mod eager_default;
 mod maxsim;
 
 use crate::index::scanners::Io;
 
 pub use default::DefaultBuilder;
+pub use eager_default::EagerDefaultBuilder;
 pub use maxsim::MaxsimBuilder;
 
 #[derive(Debug)]
 pub struct SearchOptions {
     pub epsilon: f32,
-    pub probes: Vec<u32>,
+    pub probes: SearchProbes,
     pub max_scan_tuples: Option<u32>,
     pub maxsim_refine: u32,
     pub maxsim_threshold: u32,
     pub io_search: Io,
     pub io_rerank: Io,
     pub prefilter: bool,
+}
+
+#[derive(Debug)]
+pub enum SearchProbes {
+    Lazy(Vec<u32>),
+    Eager((Vec<u32>, Vec<f32>, u32, f32)),
 }

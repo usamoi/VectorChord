@@ -65,26 +65,23 @@ impl<F: Call<u32, CodeMetadata, f32>>
 }
 
 #[derive(Debug, Clone)]
-pub struct CloneAccessor<V: Vector>(Vec<V::Element>);
+pub struct CloneAccessor<V: Vector>(u32, Vec<V::Element>);
 
-impl<V: Vector> Default for CloneAccessor<V> {
-    #[inline(always)]
-    fn default() -> Self {
-        Self(Vec::new())
+impl<V: Vector> DefaultWithDimension for CloneAccessor<V> {
+    fn default_with_dimension(dim: u32) -> Self {
+        Self(dim, Vec::new())
     }
 }
 
-impl<V: Vector> Accessor1<V::Element, (V::Metadata, u32)> for CloneAccessor<V> {
+impl<V: Vector> Accessor1<V::Element, V::Metadata> for CloneAccessor<V> {
     type Output = V;
 
-    #[inline(always)]
     fn push(&mut self, input: &[V::Element]) {
-        self.0.extend(input);
+        self.1.extend(input);
     }
 
-    #[inline(always)]
-    fn finish(self, (metadata, dim): (V::Metadata, u32)) -> Self::Output {
-        V::pack(dim, self.0, metadata)
+    fn finish(self, metadata: V::Metadata) -> Self::Output {
+        V::pack(self.0, self.1, metadata)
     }
 }
 
@@ -108,6 +105,8 @@ pub trait Vector: VectorOwned {
     fn code(vector: Self::Borrowed<'_>) -> rabitq::bit::Code;
 
     fn squared_norm(vector: Self::Borrowed<'_>) -> f32;
+
+    fn height(a: Self::Borrowed<'_>, b: Self::Borrowed<'_>, q: Self::Borrowed<'_>) -> f32;
 }
 
 impl Vector for VectOwned<f32> {
@@ -160,6 +159,16 @@ impl Vector for VectOwned<f32> {
     fn squared_norm(vector: Self::Borrowed<'_>) -> f32 {
         f32::reduce_sum_of_x2(vector.slice())
     }
+
+    fn height(a: Self::Borrowed<'_>, b: Self::Borrowed<'_>, q: Self::Borrowed<'_>) -> f32 {
+        let diff_b_a = Floating::vector_sub(b.slice(), a.slice());
+        let diff_q_a = Floating::vector_sub(q.slice(), a.slice());
+        let diff_q_b = Floating::vector_sub(q.slice(), b.slice());
+        let r_0 = Floating::reduce_sum_of_xy(&diff_b_a, &diff_q_a);
+        let r_1 = Floating::reduce_sum_of_xy(&diff_b_a, &diff_q_b);
+        let r_2 = 2.0 * Floating::reduce_sum_of_x2(&diff_b_a).sqrt();
+        (r_0 + r_1).abs() / r_2
+    }
 }
 
 impl Vector for VectOwned<f16> {
@@ -211,6 +220,16 @@ impl Vector for VectOwned<f16> {
 
     fn squared_norm(vector: Self::Borrowed<'_>) -> f32 {
         f16::reduce_sum_of_x2(vector.slice())
+    }
+
+    fn height(a: Self::Borrowed<'_>, b: Self::Borrowed<'_>, q: Self::Borrowed<'_>) -> f32 {
+        let diff_b_a = Floating::vector_sub(b.slice(), a.slice());
+        let diff_q_a = Floating::vector_sub(q.slice(), a.slice());
+        let diff_q_b = Floating::vector_sub(q.slice(), b.slice());
+        let r_0 = Floating::reduce_sum_of_xy(&diff_b_a, &diff_q_a);
+        let r_1 = Floating::reduce_sum_of_xy(&diff_b_a, &diff_q_b);
+        let r_2 = 2.0 * Floating::reduce_sum_of_x2(&diff_b_a).sqrt();
+        (r_0 + r_1).abs() / r_2
     }
 }
 
@@ -314,6 +333,10 @@ impl Vector for Rabitq8Owned {
     fn squared_norm(vector: Self::Borrowed<'_>) -> f32 {
         vector.sum_of_x2()
     }
+
+    fn height(_: Self::Borrowed<'_>, _: Self::Borrowed<'_>, _: Self::Borrowed<'_>) -> f32 {
+        unimplemented!()
+    }
 }
 
 impl Vector for Rabitq4Owned {
@@ -415,6 +438,10 @@ impl Vector for Rabitq4Owned {
 
     fn squared_norm(vector: Self::Borrowed<'_>) -> f32 {
         vector.sum_of_x2()
+    }
+
+    fn height(_: Self::Borrowed<'_>, _: Self::Borrowed<'_>, _: Self::Borrowed<'_>) -> f32 {
+        unimplemented!()
     }
 }
 

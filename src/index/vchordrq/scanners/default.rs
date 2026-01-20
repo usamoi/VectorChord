@@ -18,7 +18,7 @@ use crate::index::scanners::{Io, SearchBuilder};
 use crate::index::vchordrq::dispatch::*;
 use crate::index::vchordrq::filter::filter;
 use crate::index::vchordrq::opclass::Opfamily;
-use crate::index::vchordrq::scanners::SearchOptions;
+use crate::index::vchordrq::scanners::{SearchOptions, SearchProbes};
 use crate::recorder::{Recorder, text};
 use always_equal::AlwaysEqual;
 use dary_heap::QuaternaryHeap as Heap;
@@ -98,6 +98,9 @@ impl SearchBuilder for DefaultBuilder {
         R: RelationRead + RelationPrefetch + RelationReadStream,
         R::Page: Page<Opaque = vchordrq::Opaque>,
     {
+        let SearchProbes::Lazy(probes) = options.probes else {
+            unreachable!();
+        };
         let mut vector = None;
         let mut threshold = None;
         let mut recheck = false;
@@ -143,7 +146,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Plain => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -152,7 +155,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Simple => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -161,7 +164,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Stream => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -281,7 +284,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Plain => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -290,7 +293,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Simple => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -299,7 +302,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Stream => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -419,7 +422,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Plain => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -428,7 +431,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Simple => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -437,7 +440,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Stream => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -557,7 +560,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Plain => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -566,7 +569,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Simple => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -575,7 +578,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Stream => default_search::<_, Op>(
                             index,
                             projected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -694,7 +697,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Plain => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -703,7 +706,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Simple => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -712,7 +715,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Stream => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -831,7 +834,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Plain => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -840,7 +843,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Simple => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -849,7 +852,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Stream => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -968,7 +971,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Plain => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -977,7 +980,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Simple => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -986,7 +989,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Stream => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -1105,7 +1108,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Plain => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -1114,7 +1117,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Simple => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
@@ -1123,7 +1126,7 @@ impl SearchBuilder for DefaultBuilder {
                         Io::Stream => default_search::<_, Op>(
                             index,
                             unprojected.as_borrowed(),
-                            options.probes,
+                            probes,
                             options.epsilon,
                             bump,
                             make_h1_plain_prefetcher,
