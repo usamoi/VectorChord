@@ -272,6 +272,9 @@ impl<Opaque> PostgresRelation<Opaque> {
             _phantom: PhantomData,
         }
     }
+    pub fn raw(&self) -> pgrx::pg_sys::Relation {
+        self.raw
+    }
 }
 
 impl<O: Opaque> Relation for PostgresRelation<O> {

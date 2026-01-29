@@ -16,6 +16,18 @@ use crate::index::scanners::Io;
 use pgrx::guc::{GucContext, GucFlags, GucRegistry, GucSetting, PostgresGucEnum};
 use std::ffi::CString;
 
+fn parse<T, F: FnOnce(&[u8]) -> T>(mut input: &[u8], id: &[u8], f: F) -> T {
+    while let Some((left, right)) = slice_split_once(input, |x| *x == b';') {
+        if let Some(left) = left.strip_prefix(id) {
+            if let Some(left) = left.strip_prefix(b":") {
+                return f(left);
+            }
+        }
+        input = right;
+    }
+    f(input)
+}
+
 #[derive(Debug, Clone, Copy, PostgresGucEnum)]
 pub enum PostgresIo {
     #[name = c"read_buffer"]
@@ -299,32 +311,31 @@ pub fn vchordrq_enable_scan() -> bool {
     VCHORDRQ_ENABLE_SCAN.get()
 }
 
-pub fn vchordrq_probes() -> Vec<u32> {
-    match VCHORDRQ_PROBES.get() {
-        None => Vec::new(),
-        Some(probes) => {
-            let mut result = Vec::new();
-            let mut current = None;
-            for &c in probes.to_bytes() {
-                match c {
-                    b' ' => continue,
-                    b',' => result.push(current.take().expect("empty probes")),
-                    b'0'..=b'9' => {
-                        if let Some(x) = current.as_mut() {
-                            *x = *x * 10 + (c - b'0') as u32;
-                        } else {
-                            current = Some((c - b'0') as u32);
-                        }
+pub fn vchordrq_probes(id: &[u8]) -> Vec<u32> {
+    let input = VCHORDRQ_PROBES.get();
+    let input: &[u8] = input.as_ref().map_or(&[], CString::as_bytes);
+    parse(input, id, |probes| {
+        let mut result = Vec::new();
+        let mut current = None;
+        for &c in probes {
+            match c {
+                b' ' => continue,
+                b',' => result.push(current.take().expect("empty probes")),
+                b'0'..=b'9' => {
+                    if let Some(x) = current.as_mut() {
+                        *x = *x * 10 + (c - b'0') as u32;
+                    } else {
+                        current = Some((c - b'0') as u32);
                     }
-                    c => pgrx::error!("unknown character in probes: ASCII = {c}"),
                 }
+                c => pgrx::error!("unknown character in probes: ASCII = {c}"),
             }
-            if let Some(current) = current {
-                result.push(current);
-            }
-            result
         }
-    }
+        if let Some(current) = current {
+            result.push(current);
+        }
+        result
+    })
 }
 
 pub fn vchordrq_epsilon() -> f32 {
@@ -376,4 +387,16 @@ pub fn vchordrq_query_sampling_max_records() -> u32 {
 
 pub fn vchordrq_query_sampling_rate() -> f64 {
     VCHORDRQ_QUERY_SAMPLING_RATE.get()
+}
+
+// Emulate unstable library feature `slice_split_once`.
+// See https://github.com/rust-lang/rust/issues/112811.
+
+#[inline]
+pub fn slice_split_once<T, F>(this: &[T], pred: F) -> Option<(&[T], &[T])>
+where
+    F: FnMut(&T) -> bool,
+{
+    let index = this.iter().position(pred)?;
+    Some((&this[..index], &this[index + 1..]))
 }

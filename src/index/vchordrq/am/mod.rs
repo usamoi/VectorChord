@@ -223,7 +223,8 @@ pub unsafe extern "C-unwind" fn amcostestimate(
                 return;
             }
             let index = PostgresRelation::<vchordrq::Opaque>::new(relation.raw());
-            let probes = gucs::vchordrq_probes();
+            let name = name_of(index.raw());
+            let probes = gucs::vchordrq_probes(name.to_bytes());
             let cost = vchordrq::cost(&index);
             if cost.cells.len() != 1 + probes.len() {
                 panic!(
@@ -413,9 +414,10 @@ pub unsafe extern "C-unwind" fn amrescan(
         scanner.bump.reset();
         let opfamily = opfamily((*scan).indexRelation);
         let index = PostgresRelation::new((*scan).indexRelation);
+        let name = name_of(index.raw());
         let options = SearchOptions {
             epsilon: gucs::vchordrq_epsilon(),
-            probes: gucs::vchordrq_probes(),
+            probes: gucs::vchordrq_probes(name.to_bytes()),
             max_scan_tuples: gucs::vchordrq_max_scan_tuples(),
             maxsim_refine: gucs::vchordrq_maxsim_refine(),
             maxsim_threshold: gucs::vchordrq_maxsim_threshold(),
@@ -577,4 +579,8 @@ impl Drop for Index {
             pgrx::pg_sys::index_close(self.raw, self.lockmode);
         }
     }
+}
+
+unsafe fn name_of<'a>(raw: *mut pgrx::pg_sys::RelationData) -> &'a CStr {
+    unsafe { CStr::from_ptr((*(*raw).rd_rel).relname.data.as_ptr()) }
 }
