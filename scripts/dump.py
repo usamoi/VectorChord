@@ -1,14 +1,10 @@
-# This software is licensed under a dual license model:
+# SPDX-License-Identifier: CC0-1.0
 #
-# GNU Affero General Public License v3 (AGPLv3): You may use, modify, and
-# distribute this software under the terms of the AGPLv3.
+# This file is dedicated to the public domain under CC0 1.0.
+# To the extent possible under law, TensorChord Inc. has waived all
+# copyright and related or neighboring rights to this work.
 #
-# Elastic License v2 (ELv2): You may also use, modify, and distribute this
-# software under the Elastic License v2, which has specific restrictions.
-#
-# We welcome any commercial collaboration or support. For inquiries
-# regarding the licenses, please contact us at:
-# vectorchord-inquiry@tensorchord.ai
+# You may use this work for any purpose, without restriction.
 #
 # Copyright (c) 2025 TensorChord Inc.
 

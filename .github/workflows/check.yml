@@ -68,11 +68,9 @@ jobs:
 
           RS_HEADER=$(echo "$HEADER" | awk '{ if ($0 ~ /^$/) print "//"; else print "// " $0 }')
           C_HEADER=$(echo "$HEADER" | awk '{ if ($0 ~ /^$/) print "//"; else print "// " $0 }')
-          PY_HEADER=$(echo "$HEADER" | awk '{ if ($0 ~ /^$/) print "#"; else print "# " $0 }')
 
           RS_FILES=$(find . -type f -name "*.rs" -not -path "./target/*")
           C_FILES=$(find . -type f -name "*.c" -not -path "./target/*")
-          PY_FILES=$(find . -type f -name "*.py" -not -path "./target/*")
 
           FLAG="0"
 
@@ -85,13 +83,6 @@ jobs:
 
           for p in $C_FILES; do
             if ! head -n "$COUNT" "$p" | cmp -s - <(echo "$C_HEADER"); then
-              echo "license header mismatch in file $p"
-              FLAG="1"
-            fi
-          done
-
-          for p in $PY_FILES; do
-            if ! head -n "$COUNT" "$p" | cmp -s - <(echo "$PY_HEADER"); then
               echo "license header mismatch in file $p"
               FLAG="1"
             fi
