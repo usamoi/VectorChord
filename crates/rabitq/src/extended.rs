@@ -119,8 +119,10 @@ pub fn ugly_code<const BITS: usize>(vector: &[f32]) -> Code {
         };
         let mut code = Vec::with_capacity(n as _);
         for i in 0..n {
-            let v = scale * normalized_vector[i];
-            let v = v + v.signum() * delta[i] as f32;
+            let mut v = scale * normalized_vector[i];
+            if let Some(delta) = delta.as_ref() {
+                v = v + v.signum() * delta[i] as f32;
+            }
             let c = v.floor().clamp(min as f32, max as f32) as i32;
             code.push((c + (1 << (BITS - 1))) as _);
         }
@@ -251,8 +253,14 @@ fn find_scale<const B: usize>(o: &[f32]) -> f32 {
     x_m as f32 + f32::EPSILON
 }
 
-fn ugly_find_scale<const B: usize>(o: &[f32]) -> (f32, Vec<i32>) {
+fn ugly_find_scale<const B: usize>(o: &[f32]) -> (f32, Option<Vec<i32>>) {
     assert!((1..=8).contains(&B));
+
+    let scale = (1 << (B - 1)) as f32 / f32::reduce_min_max_of_x(o).1;
+
+    if B >= 8 {
+        return (scale, None);
+    }
 
     let dim = o.len();
 
@@ -260,7 +268,6 @@ fn ugly_find_scale<const B: usize>(o: &[f32]) -> (f32, Vec<i32>) {
     let mut numerator_m = 0.0f64;
     let mut sqr_denominator_m = 0.0f64;
 
-    let scale = (1 << (B - 1)) as f32 / f32::reduce_min_max_of_x(o).1;
     for i in 0..dim {
         code.push((o[i] as f64 * scale as f64) as u8);
         let value = code[i] as f64 + 0.5;
@@ -299,7 +306,7 @@ fn ugly_find_scale<const B: usize>(o: &[f32]) -> (f32, Vec<i32>) {
         }
     }
 
-    (scale, delta)
+    (scale, Some(delta))
 }
 
 pub fn pack_code<const BITS: usize>(input: &[u8]) -> [Vec<u64>; BITS] {

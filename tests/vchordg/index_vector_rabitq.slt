@@ -20,9 +20,8 @@ CREATE INDEX ti ON t USING vchordg ((quantize_to_rabitq8(val)::rabitq8(64)) rabi
 query I
 SELECT index FROM t ORDER BY quantize_to_rabitq8(val) <-> quantize_to_rabitq8(array_cat(ARRAY[0.6, 0.8], ARRAY(SELECT 0.0 FROM generate_series(1, 62)))::vector) LIMIT 10;
 ----
-155
 1608
-1643
+155
 174
 818
 1603
@@ -30,6 +29,7 @@ SELECT index FROM t ORDER BY quantize_to_rabitq8(val) <-> quantize_to_rabitq8(ar
 60
 218
 1080
+1568
 
 statement ok
 DROP INDEX ti;
@@ -40,9 +40,8 @@ CREATE INDEX ti ON t USING vchordg ((quantize_to_rabitq8(val)::rabitq8(64)) rabi
 query I
 SELECT index FROM t ORDER BY quantize_to_rabitq8(val) <#> quantize_to_rabitq8(array_cat(ARRAY[0.6, 0.8], ARRAY(SELECT 0.0 FROM generate_series(1, 62)))::vector) LIMIT 10;
 ----
-155
 1608
-1643
+155
 174
 818
 1603
@@ -50,6 +49,7 @@ SELECT index FROM t ORDER BY quantize_to_rabitq8(val) <#> quantize_to_rabitq8(ar
 60
 218
 1080
+1639
 
 statement ok
 DROP INDEX ti;
@@ -60,9 +60,8 @@ CREATE INDEX ti ON t USING vchordg ((quantize_to_rabitq8(val)::rabitq8(64)) rabi
 query I
 SELECT index FROM t ORDER BY quantize_to_rabitq8(val) <=> quantize_to_rabitq8(array_cat(ARRAY[0.6, 0.8], ARRAY(SELECT 0.0 FROM generate_series(1, 62)))::vector) LIMIT 10;
 ----
-155
 1608
-1643
+155
 174
 818
 1603
@@ -70,6 +69,7 @@ SELECT index FROM t ORDER BY quantize_to_rabitq8(val) <=> quantize_to_rabitq8(ar
 60
 218
 1080
+1568
 
 statement ok
 DROP INDEX ti;
@@ -78,17 +78,18 @@ statement ok
 CREATE INDEX ti ON t USING vchordg ((quantize_to_rabitq8(val::halfvec)::rabitq8(64)) rabitq8_l2_ops);
 
 query I
-SELECT index FROM t ORDER BY quantize_to_rabitq8(val::halfvec) <-> quantize_to_rabitq8(array_cat(ARRAY[0.6, 0.8], ARRAY(SELECT 0.0 FROM generate_series(1, 62)))::halfvec) LIMIT 9;
+SELECT index FROM t ORDER BY quantize_to_rabitq8(val::halfvec) <-> quantize_to_rabitq8(array_cat(ARRAY[0.6, 0.8], ARRAY(SELECT 0.0 FROM generate_series(1, 62)))::halfvec) LIMIT 10;
 ----
-155
 1608
-1643
+155
 174
-818
 1603
+818
 1629
 60
 218
+1080
+79
 
 statement ok
 DROP INDEX ti;
@@ -97,17 +98,18 @@ statement ok
 CREATE INDEX ti ON t USING vchordg ((quantize_to_rabitq8(val::halfvec)::rabitq8(64)) rabitq8_ip_ops);
 
 query I
-SELECT index FROM t ORDER BY quantize_to_rabitq8(val::halfvec) <#> quantize_to_rabitq8(array_cat(ARRAY[0.6, 0.8], ARRAY(SELECT 0.0 FROM generate_series(1, 62)))::halfvec) LIMIT 9;
+SELECT index FROM t ORDER BY quantize_to_rabitq8(val::halfvec) <#> quantize_to_rabitq8(array_cat(ARRAY[0.6, 0.8], ARRAY(SELECT 0.0 FROM generate_series(1, 62)))::halfvec) LIMIT 10;
 ----
-155
 1608
-1643
+155
 174
 818
 1603
 1629
 60
 218
+1080
+79
 
 statement ok
 DROP INDEX ti;
@@ -116,17 +118,18 @@ statement ok
 CREATE INDEX ti ON t USING vchordg ((quantize_to_rabitq8(val::halfvec)::rabitq8(64)) rabitq8_cosine_ops);
 
 query I
-SELECT index FROM t ORDER BY quantize_to_rabitq8(val::halfvec) <=> quantize_to_rabitq8(array_cat(ARRAY[0.6, 0.8], ARRAY(SELECT 0.0 FROM generate_series(1, 62)))::halfvec) LIMIT 9;
+SELECT index FROM t ORDER BY quantize_to_rabitq8(val::halfvec) <=> quantize_to_rabitq8(array_cat(ARRAY[0.6, 0.8], ARRAY(SELECT 0.0 FROM generate_series(1, 62)))::halfvec) LIMIT 10;
 ----
-155
 1608
-1643
+155
 174
 818
 1603
 1629
 60
 218
+1080
+79
 
 statement ok
 DROP INDEX ti;
